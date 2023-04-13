@@ -2,19 +2,6 @@ import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
-class TSDataset(Dataset):
-    def __init__(self, data, labels=None):
-        self.data = data
-        self.labels = labels
-        self.labels_passed = labels is not None
-
-    def __getitem__(self, index):
-        if self.labels_passed:
-            return self.data[index], self.labels[index]
-        return self.data[index]
-
-    def __len__(self):
-        return len(self.data)
     
 class TSDataLoader:
     def __init__(self, datasets, batch_size, shuffle=True):

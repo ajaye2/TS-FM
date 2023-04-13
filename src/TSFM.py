@@ -2,10 +2,16 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from .dataloader import TSDataset, TSDataLoader
+from .projection_layers import LSTMMaskedAutoencoderProjection
 import numpy as np
 import math
 
 class TSFM:
+
+    PROJECTION_LAYER_TYPES = {
+        'autoencoder': LSTMMaskedAutoencoderProjection,
+    }
+
     '''The TSFM model'''
     
     def __init__(
@@ -19,6 +25,8 @@ class TSFM:
         device='cuda',
         lr=0.001,
         batch_size=16,
+        log=False,
+        dtype=torch.float32,
 
         max_train_length=None,
     ):
@@ -33,25 +41,33 @@ class TSFM:
         self.lr = lr
         self.batch_size = batch_size
         self.max_train_length = max_train_length
+        self.projection_layer_dims = projection_layer_dims
+        self.encoder_layer_dims = encoder_layer_dims
+        self.log = log
+        self.dtype = dtype
 
         self.projection_layers = {}
         self._projection_layers = {}
         
-        for dataset_name, data in input_data_shapes_dict.items():
-            assert data.ndim == 3
-            self._projection_layers[dataset_name] = self.get_projection_layer(data, projection_layer_encoder, projection_layer_dims)
+        for dataset_name, data_shape in input_data_shapes_dict.items():
+            assert len(data_shape) == 2
+            self._projection_layers[dataset_name] = self.get_projection_layer(data_shape, projection_layer_encoder)
             self.projection_layers[dataset_name] = torch.optim.swa_utils.AveragedModel(self._projection_layers[dataset_name])
             self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
 
-        self._encoder = Encoder(encoder_layer, encoder_layer_dims, depth).to(self.device)
-        self.encoder = torch.optim.swa_utils.AveragedModel(self._encoder)
-        self.encoder.update_parameters(self._encoder)
+        # self._encoder = Encoder(encoder_layer, encoder_layer_dims, depth).to(self.device)
+        # self.encoder = torch.optim.swa_utils.AveragedModel(self._encoder)
+        # self.encoder.update_parameters(self._encoder)
         
 
         self.n_epochs = 0
         self.n_iters = 0
+
+    def get_projection_layer(self, data_shape, projection_layer_encoder):
+        proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](data_shape, self.projection_layer_dims, self.projection_layer_dims).to(self.device)
+        return proj_layer
     
-    def fit(self, train_data_dict, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10):
+    def fit(self, train_data_dict, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True):
         ''' Training the TSFM model.
         
         Args:
@@ -65,7 +81,7 @@ class TSFM:
         '''
         
         datasets = {}
-        optimizer_list = [{ "params": self._encoder.parameters()}]
+        optimizer_list = []#[{ "params": self._encoder.parameters()}]
 
         for dataset_name, train_data in train_data_dict.items():
             assert train_data.ndim == 3
@@ -79,16 +95,18 @@ class TSFM:
             #     train_data = centerize_vary_length_series(train_data)
                     
             train_data             = train_data[~np.isnan(train_data).all(axis=2).all(axis=1)]
-            datasets[dataset_name] = TSDataset(torch.from_numpy(train_data).to(torch.float))
+            if type(train_data) == np.array:
+                train_data = torch.from_numpy(train_data).to(self.dtype)
+            datasets[dataset_name] = TSDataset(train_data)
 
             if warmup_projection_layers:
+                self._projection_layers[dataset_name].warmup(datasets[dataset_name], n_epochs=warmup_epochs, batch_size=self.batch_size, learning_rate=self.lr, log=log)
 
-                self._projection_layers[dataset_name].warmup(train_data, n_epochs=10, batch_size=16, learning_rate=self.lr)
 
             optimizer_list.append({"params": self._projection_layers[dataset_name].encoder.parameters()})
 
             
-        train_loader    = TSDataLoader(datasets, batch_size=self.batch_size, shuffle=shuffle, drop_last=True)
+        train_loader    = TSDataLoader(datasets, batch_size=self.batch_size, shuffle=shuffle)
         optimizer       = torch.optim.AdamW(optimizer_list, lr=self.lr)
         
         if n_iters is None and n_epochs is None:
@@ -97,62 +115,62 @@ class TSFM:
         loss_log = {name: [] for name in train_data_dict.keys()}
 
 
-        while True:
-            if n_epochs is not None and self.n_epochs >= n_epochs:
-                break
+        # while True:
+        #     if n_epochs is not None and self.n_epochs >= n_epochs:
+        #         break
             
-            cum_loss_dict = {name: 0 for name in train_data_dict.keys()}
-            n_epoch_iters = 0
+        #     cum_loss_dict = {name: 0 for name in train_data_dict.keys()}
+        #     n_epoch_iters = 0
             
-            interrupted = False
-            for batch in train_loader:
-                if n_iters is not None and self.n_iters >= n_iters:
-                    interrupted = True
-                    break
+        #     interrupted = False
+        #     for batch in train_loader:
+        #         if n_iters is not None and self.n_iters >= n_iters:
+        #             interrupted = True
+        #             break
 
-                for dataset_name, data in batch.items():
-                    if isinstance(data, tuple) and len(data) == 2:
-                        # Unpack data and labels
-                        inputs, labels = data
-                    else:
-                        inputs = data
-                        labels = None
+        #         for dataset_name, data in batch.items():
+        #             if isinstance(data, tuple) and len(data) == 2:
+        #                 # Unpack data and labels
+        #                 inputs, labels = data
+        #             else:
+        #                 inputs = data
+        #                 labels = None
                     
-                    # if self.max_train_length is not None and inputs.size(1) > self.max_train_length:
-                    #     window_offset = np.random.randint(inputs.size(1) - self.max_train_length + 1)
-                    #     inputs = inputs[:, window_offset : window_offset + self.max_train_length]
+        #             # if self.max_train_length is not None and inputs.size(1) > self.max_train_length:
+        #             #     window_offset = np.random.randint(inputs.size(1) - self.max_train_length + 1)
+        #             #     inputs = inputs[:, window_offset : window_offset + self.max_train_length]
 
-                    inputs = inputs.to(self.device)
+        #             inputs = inputs.to(self.device)
 
-                    optimizer.zero_grad()
+        #             optimizer.zero_grad()
 
-                    projected_input = self._projection_layers[dataset_name](inputs)
+        #             projected_input = self._projection_layers[dataset_name](inputs)
 
-                    out = self._encoder(projected_input)
+        #             out = self._encoder(projected_input)
                 
-                    loss = self.loss(out, labels)
-                    loss.backward()
-                    optimizer.step()
+        #             loss = self.loss(out, labels)
+        #             loss.backward()
+        #             optimizer.step()
 
-                    self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
-                    self.encoder.update_parameters(self.encoder)
+        #             self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
+        #             self.encoder.update_parameters(self.encoder)
                     
-                    cum_loss_dict[dataset_name] += loss.item()
+        #             cum_loss_dict[dataset_name] += loss.item()
 
-                n_epoch_iters += 1
-                self.n_iters  += 1
+        #         n_epoch_iters += 1
+        #         self.n_iters  += 1
                 
-            if interrupted:
-                break
+        #     if interrupted:
+        #         break
             
-            for dataset_name, cum_loss in cum_loss_dict.items():
-                cum_loss /= n_epoch_iters
-                loss_log[dataset_name].append(cum_loss)
+        #     for dataset_name, cum_loss in cum_loss_dict.items():
+        #         cum_loss /= n_epoch_iters
+        #         loss_log[dataset_name].append(cum_loss)
 
-                if verbose:
-                    print(f"Epoch #{self.n_epochs}: loss={cum_loss}")
+        #         if verbose:
+        #             print(f"Epoch #{self.n_epochs}: loss={cum_loss}")
 
-            self.n_epochs += 1
+        #     self.n_epochs += 1
     
         return loss_log
 
