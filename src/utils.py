@@ -1,12 +1,115 @@
 import os
 import numpy as np
+import pandas as pd
 import pickle
 import torch
 import random
 from datetime import datetime
+from torch import nn
+
+
+import torch
+import torch.nn as nn
+
+class Normalizer():
+    def __init__(self, eps=1e-5):
+        self.eps = eps
+
+    def forward(self, x):
+        self._get_statistics(x)
+        x = self._normalize(x)
+        return x
+    
+    def _get_statistics(self, x):
+        dim2reduce = tuple(range(1, x.ndim-1))
+        self.mean = torch.mean(x, dim=dim2reduce, keepdim=True).detach()
+        self.stdev = torch.sqrt(torch.var(x, dim=dim2reduce, keepdim=True, unbiased=False) + self.eps).detach()
+
+    def _normalize(self, x):
+        x = x - self.mean
+        x = x / self.stdev
+        return x
+
+
+
+# TODO: Recheck logic of this function
+def create_3d_array(df, indices, T):
+    n = len(indices)
+    F = df.shape[1]
+    df = df.sort_index()
+    
+    # result = np.zeros((n, T, F))
+    result = []
+
+    # create dictionary where key is index and value is next index
+    next_idx_dict = {df.index[i]: df.index[i+1] for i in range(len(df)-1)}
+    
+    for i, idx in enumerate(indices):
+        if idx not in next_idx_dict: 
+            # print(f"Index {idx} is the last index")
+            continue
+        temp_df = df.loc[:next_idx_dict[idx]]
+        if len(temp_df) >= T:
+            # result[i] = temp_df.iloc[-T:].values
+            result.append(temp_df.iloc[-T:].values)
+        # else:
+            # print(f"Index {idx} has less than {T} rows")
+
+
+    return np.array( result )
+
+
+def standardize(df, look_back, type='standard'):
+    """
+    Standardize a dataframe using rolling mean and std
+    
+    """
+    if type == 'minmax':
+        x_bar   = df.rolling(look_back).min()
+        z_std   = df.rolling(look_back).max() - x_bar
+        z_score = 1 + (df - x_bar) / z_std
+    elif type=='standard':
+        x_bar   = df.rolling(look_back).mean()
+        z_std   = df.rolling(look_back).std()
+        z_score = (df - x_bar) / z_std
+    else:
+        raise ValueError("type must be 'standard' or 'minmax'")
+
+    z_score.replace([np.inf, -np.inf], np.nan, inplace=True)
+    return z_score.fillna(method ='ffill').dropna()
+
+
+def rolling_mean_diff(df, look_back_windows, type='standard'):
+    """
+    Calculate rolling mean difference
+
+    Args:
+        df (_type_): _description_
+        look_back_windows (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    df = df.copy()
+    result = []
+    for look_back in look_back_windows:
+        # temp_df = df - df.rolling(look_back).mean()
+        if type == 'standard' or type == 'minmax':
+            temp_df = standardize(df, look_back, type=type)
+        elif type == 'max':
+            temp_df = df / df.rolling(look_back).max()
+        temp_df.columns = [f'{col}_{type}_{look_back}' for col in temp_df.columns]
+        result.append(temp_df)
+    result = pd.concat(result, axis=1).fillna(method='ffill').dropna()
+    return result
+
 
 # Cite this code as:
 # Han, Yue-Zhi. (2021, January 1). ts2vec/utils.py [Computer software]. GitHub. https://github.com/yuezhihan/ts2vec/blob/main/utils.py#L47
+
+
+# Cite this code as:
+# Kim, Tae-Suk. (2021, January 1). ts2vec/REVIN.py [Computer software]. GitHub. https://github.com/ts-kim/RevIN/blob/master/RevIN.py
 
 
 def pkl_save(name, var):
@@ -79,57 +182,30 @@ def name_with_datetime(prefix='default'):
     return prefix + '_' + now.strftime("%Y%m%d_%H%M%S")
 
 
-# TODO: Recheck logic of this function
-def create_3d_array(df, indices, T):
-    n = len(indices)
-    F = df.shape[1]
-    df = df.sort_index()
+
+# https://stackoverflow.com/questions/44130851/simple-lstm-in-pytorch-with-sequential-module
+class ExtractTensor(nn.Module):
+    def forward(self,input, return_type='hidden'):
+        # Output shape (batch, features, hidden)
+        x, (hidden_n, cell_n) = input
+        # Reshape shape (batch, hidden)
+        if return_type == 'hidden':
+            x = hidden_n[-1]
+        elif return_type == 'cell':
+            x = cell_n[-1]
+
+        return x
     
-    # result = np.zeros((n, T, F))
-    result = []
 
-    # create dictionary where key is index and value is next index
-    next_idx_dict = {df.index[i]: df.index[i+1] for i in range(len(df)-1)}
+def mask_input(x, mask_percentage=0.2):
+    # The mask_percentage should be between 0 and 1
+    assert 0 <= mask_percentage <= 1
     
-    for i, idx in enumerate(indices):
-        if idx not in next_idx_dict: 
-            # print(f"Index {idx} is the last index")
-            continue
-        temp_df = df.loc[:next_idx_dict[idx]]
-        if len(temp_df) >= T:
-            # result[i] = temp_df.iloc[-T:].values
-            result.append(temp_df.iloc[-T:].values)
-        # else:
-            # print(f"Index {idx} has less than {T} rows")
-
-
-    return np.array( result )
-
-
-def standardize(df, look_back, type='standard'):
-    """
-    Standardize a dataframe using rolling mean and std
-    
-    """
-    if type == 'minmax':
-        x_bar   = df.rolling(look_back).min()
-        z_std   = df.rolling(look_back).max() - x_bar
-        z_score = 1 + (df - x_bar) / z_std
-    elif type=='standard':
-        x_bar   = df.rolling(look_back).mean()
-        z_std   = df.rolling(look_back).std()
-        z_score = (df - x_bar) / z_std
-    else:
-        raise ValueError("type must be 'standard' or 'minmax'")
-
-    z_score.replace([np.inf, -np.inf], np.nan, inplace=True)
-    return z_score.fillna(method ='ffill').dropna()
-
-
-
-
-
-
+    # Generate a mask tensor with the same shape as x
+    mask = torch.rand_like(x) < mask_percentage
+    masked_x = x.clone()  # Create a copy to not modify the original input
+    masked_x[mask] = 0  # Set masked elements to 0 (or any desired value)
+    return masked_x
 
 
 def init_dl_program(
@@ -183,3 +259,5 @@ def init_dl_program(
         torch.backends.cuda.matmul.allow_tf32 = use_tf32
         
     return devices if len(devices) > 1 else devices[0]
+
+

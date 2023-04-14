@@ -1,10 +1,14 @@
 import torch
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
-from .dataloader import TSDataset, TSDataLoader
+from .dataloader import TSDataLoader
+from .dataset import TSDataset
 from .projection_layers import LSTMMaskedAutoencoderProjection
 import numpy as np
 import math
+
+from .TFC import TFC, TFCDataset
+from .configs import Configs
 
 class TSFM:
 
@@ -37,6 +41,13 @@ class TSFM:
         '''
         
         super().__init__()
+
+        with_gpu = torch.cuda.is_available()
+        if with_gpu and device == 'cuda':
+            device = torch.device("cuda")
+        else:
+            device = torch.device("cpu")
+
         self.device = device
         self.lr = lr
         self.batch_size = batch_size
@@ -45,6 +56,7 @@ class TSFM:
         self.encoder_layer_dims = encoder_layer_dims
         self.log = log
         self.dtype = dtype
+        self.encoder_layer = encoder_layer
 
         self.projection_layers = {}
         self._projection_layers = {}
@@ -67,7 +79,7 @@ class TSFM:
         proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](data_shape, self.projection_layer_dims, self.projection_layer_dims).to(self.device)
         return proj_layer
     
-    def fit(self, train_data_dict, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True):
+    def fit(self, train_data_dict, labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', config_kwargs=None):
         ''' Training the TSFM model.
         
         Args:
@@ -97,10 +109,32 @@ class TSFM:
             train_data             = train_data[~np.isnan(train_data).all(axis=2).all(axis=1)]
             if type(train_data) == np.array:
                 train_data = torch.from_numpy(train_data).to(self.dtype)
-            datasets[dataset_name] = TSDataset(train_data)
+            
 
             if warmup_projection_layers:
-                self._projection_layers[dataset_name].warmup(datasets[dataset_name], n_epochs=warmup_epochs, batch_size=self.batch_size, learning_rate=self.lr, log=log)
+                self._projection_layers[dataset_name].warmup(TSDataset(train_data), n_epochs=warmup_epochs, batch_size=self.batch_size, learning_rate=self.lr, log=log)
+
+            if self.encoder_layer == 'TFC':
+                
+                if labels is None:
+                    # create labels as dummy array with shape (n_samples, 1)
+                    # Labels are not used in pre-training, but are required for the TFCDataset class
+                    labels = torch.zeros((train_data.shape[0], 1))
+                ds = {"samples": train_data, "labels": labels}
+
+                if configs is None:
+                    if config_kwargs is None:
+                        raise ValueError('Either configs or config_kwargs must be specified.')
+                    
+                    config_kwargs['batch_size']     = self.batch_size
+                    config_kwargs['input_channels'] = train_data.shape[-1]
+                    config_kwargs['timesteps']      = train_data.shape[1]
+                    
+                    configs = Configs(**config_kwargs)
+
+                datasets[dataset_name] = TFCDataset(ds, configs, training_mode, target_dataset_size=configs.batch_size, subset=subset)
+            else:
+                raise NotImplementedError(f'Encoder {self.encoder_layer} is not implemented yet.')
 
 
             optimizer_list.append({"params": self._projection_layers[dataset_name].encoder.parameters()})

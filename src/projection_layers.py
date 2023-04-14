@@ -1,20 +1,20 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+
+from .loss import MASE
 from .RevIN import RevIN
-from .dataloader import TSDataset, TSDataLoader
+from .dataset import TSDataset
+from .dataloader import TSDataLoader
+from .utils import ExtractTensor, mask_input, Normalizer
+from torchmetrics import MeanAbsolutePercentageError, MeanSquaredLogError
 
-
-def mask_input(x, mask_percentage=0.2):
-    # Generate a mask tensor with the same shape as x
-    mask = torch.rand_like(x) < mask_percentage
-    masked_x = x.clone()  # Create a copy to not modify the original input
-    masked_x[mask] = 0  # Set masked elements to 0 (or any desired value)
-    return masked_x
 
 class BaseProjectionLayer(nn.Module):
     def __init__(self):
         super().__init__()
+        self.loss_function = nn.L1Loss() #MeanAbsolutePercentageError() #nn.MSELoss() #MASE() #MeanAbsolutePercentageError() #
+        self.normalizer = Normalizer()
 
     def forward(self, x):
         raise NotImplementedError
@@ -29,14 +29,13 @@ class BaseProjectionLayer(nn.Module):
             print(f'Warming up with {len(data_loader)} batches of size {batch_size}')
 
         # Define the loss function and optimizer
-        loss_function = nn.MSELoss()
+        
         optimizer     = optim.Adam(self.parameters(), lr=learning_rate)
 
         # Train the autoencoder for n_epochs
         for epoch in range(n_epochs):
             cum_loss = 0
-            for batch in data_loader:
-                inputs = batch[0]
+            for inputs in data_loader:
 
                 # Zero the gradients
                 optimizer.zero_grad()
@@ -45,7 +44,10 @@ class BaseProjectionLayer(nn.Module):
                 reconstructed = self(inputs)
 
                 # Calculate the loss
-                loss = loss_function(reconstructed, inputs)
+                # reconstructed = self.normalizer.forward(reconstructed)
+                # inputs        = self.normalizer.forward(inputs)
+                loss = self.loss_function(reconstructed, inputs)
+
 
                 # Backward pass
                 loss.backward()
@@ -58,21 +60,9 @@ class BaseProjectionLayer(nn.Module):
             if log:
                 print(f'Epoch: {epoch}, Loss: {cum_loss / len(data_loader)}')
 
-# https://stackoverflow.com/questions/44130851/simple-lstm-in-pytorch-with-sequential-module
-class extract_tensor(nn.Module):
-    def forward(self,input, return_type='hidden'):
-        # Output shape (batch, features, hidden)
-        x, (hidden_n, cell_n) = input
-        # Reshape shape (batch, hidden)
-        if return_type == 'hidden':
-            x = hidden_n[-1]
-        elif return_type == 'cell':
-            x = cell_n[-1]
-
-        return x
     
 class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
-    def __init__(self, input_dims, hidden_dims, output_dims, use_revin=True, dtype=torch.float32):
+    def __init__(self, input_dims, hidden_dims, output_dims, use_revin=True, dtype=torch.float32, **kwargs):
         super().__init__()
 
         self.dtype = dtype
@@ -81,8 +71,7 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
             self.revin_layer = RevIN(input_dims[1])
         
 
-        self.encoder   = nn.LSTM(input_size=input_dims[1], hidden_size=output_dims, batch_first=True)
-        # self.linear_encoder = nn.Linear(hidden_dims, output_dims)
+        self.encoder   = nn.LSTM(input_size=input_dims[1], hidden_size=output_dims, batch_first=True) #Conv1DLSTMProjectionEncoder( input_dims, output_dims, **kwargs) #
 
         self.lstm_decoder   = nn.LSTM(input_size=output_dims, hidden_size=hidden_dims, batch_first=True)
         self.linear_decoder = nn.Linear(hidden_dims, input_dims[1])
@@ -91,7 +80,6 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
 
     def forward(self, x, training=True):
         # Implement the full forward pass for masked autoencoder (including decoder)
-
         if training:
             x                           = mask_input(x)
 
@@ -130,6 +118,23 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
         return enc_output
     
 
+
+class Conv1DLSTMProjectionEncoder(BaseProjectionLayer):
+    def __init__(self, input_dims, output_dims, out_channels=12, kernel_size=5, padding=1, **kwargs):
+        super().__init__()
+        # Define the architecture for Conv1D encoder
+
+        self.con1d  = nn.Conv1d(input_dims[1], out_channels, kernel_size=kernel_size, padding=padding)
+
+        self.lstm   = nn.LSTM(input_size=out_channels, hidden_size=output_dims, batch_first=True)
+
+    def forward(self, x):
+        # Forward pass for Conv1D encoder
+        x = x.permute(0, 2, 1)
+        x = self.con1d(x)
+        x = x.permute(0, 2, 1)
+        
+        return self.lstm(x) 
 
 
 class VAEProjectionLayer(BaseProjectionLayer):
