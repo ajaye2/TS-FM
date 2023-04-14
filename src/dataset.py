@@ -36,17 +36,21 @@ class TSDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-class ImputationDataset(Dataset):
-    """Dynamically computes missingness (noise) mask for each sample"""
 
-    def __init__(self, data, indices, mean_mask_length=3, masking_ratio=0.15,
+
+class ImputationDataset(Dataset):
+    """Dynamically computes missingness (noise) mask for each sample
+    
+        Modified version of the code from:
+        George Zerveas et al. A Transformer-based Framework for Multivariate Time Series Representation Learning,
+    """
+
+    def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,
                  mode='separate', distribution='geometric', exclude_feats=None):
         super(ImputationDataset, self).__init__()
 
-        self.data = data  # this is a subclass of the BaseData class in data.py
-        self.IDs = indices  # list of data IDs, but also mapping between integer index and ID
-        self.feature_df = self.data.feature_df.loc[self.IDs]
-
+        self.data = data 
+        self.labels = labels
         self.masking_ratio = masking_ratio
         self.mean_mask_length = mean_mask_length
         self.mode = mode
@@ -64,18 +68,21 @@ class ImputationDataset(Dataset):
             ID: ID of sample
         """
 
-        X = self.feature_df.loc[self.IDs[ind]].values  # (seq_length, feat_dim) array
+        X = self.data[ind]  # (seq_length, feat_dim) array
         mask = noise_mask(X, self.masking_ratio, self.mean_mask_length, self.mode, self.distribution,
                           self.exclude_feats)  # (seq_length, feat_dim) boolean array
+        
+        if self.labels is not None:
+            return X, torch.from_numpy(mask), self.labels[ind]
 
-        return torch.from_numpy(X), torch.from_numpy(mask), self.IDs[ind]
+        return X, torch.from_numpy(mask)
 
     def update(self):
         self.mean_mask_length = min(20, self.mean_mask_length + 1)
         self.masking_ratio = min(1, self.masking_ratio + 0.05)
 
     def __len__(self):
-        return len(self.IDs)
+        return len(self.data)
 
 
 class TransductionDataset(Dataset):
@@ -240,7 +247,7 @@ def collate_unsuperv(data, max_len=None, mask_compensation=False):
     """
 
     batch_size = len(data)
-    features, masks, IDs = zip(*data)
+    features, masks = zip(*data) # ID REMOVED
 
     # Stack and pad features and masks (convert 2D to 3D tensors, i.e. add batch dimension)
     lengths = [X.shape[0] for X in features]  # original sequence length for each time series
@@ -261,7 +268,7 @@ def collate_unsuperv(data, max_len=None, mask_compensation=False):
 
     padding_masks = padding_mask(torch.tensor(lengths, dtype=torch.int16), max_len=max_len)  # (batch_size, padded_length) boolean tensor, "1" means keep
     target_masks = ~target_masks  # inverse logic: 0 now means ignore, 1 means predict
-    return X, targets, target_masks, padding_masks, IDs
+    return X, targets, target_masks, padding_masks  # ID REMOVED
 
 
 def noise_mask(X, masking_ratio, lm=3, mode='separate', distribution='geometric', exclude_feats=None):
