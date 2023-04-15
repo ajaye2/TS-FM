@@ -21,12 +21,13 @@ class BaseProjectionLayer(nn.Module):
         'masked_mse': MaskedLoss(type_of_loss='mse'),
 
     }
-    def __init__(self, lose_type='mae', device='cpu', **kwargs):
+    def __init__(self, type_of_layer, lose_type='mae', device='cpu', **kwargs):
         super().__init__()
         self.device         = device
         self.lose_type      = lose_type
         self.loss_function  = self.LOSS_FUNCTIONS[lose_type]
         self.normalizer     = Normalizer()
+        self.type_of_layer  = type_of_layer
 
     def forward(self, x, mask=None):
         raise NotImplementedError
@@ -34,8 +35,6 @@ class BaseProjectionLayer(nn.Module):
     def warmup(self, dataset, max_len, n_epochs=10, batch_size=64, learning_rate=0.001, log=False, data_set_type=TSDataset, collate_fn='unsuperv'):
         # Create a DataLoader for the warmup data
         assert isinstance(dataset, (TSDataset, ImputationDataset))
-        if not isinstance(dataset, data_set_type):
-            dataset = data_set_type(torch.tensor(dataset, dtype=self.dtype))
 
         if collate_fn == 'unsuperv' and isinstance(dataset, ImputationDataset):
             data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=lambda x: collate_unsuperv(x, max_len=max_len))
@@ -97,7 +96,7 @@ class BaseProjectionLayer(nn.Module):
         if data_set_type == ImputationDataset:
             inputs, targets, target_masks, padding_masks = data
         elif data_set_type == TSDataset:
-            if len(data) == 2: inputs, labels = data
+            if len(data) == 2: inputs, targets = data
             else: inputs, targets = data, data
 
         if targets is not None:
@@ -115,7 +114,7 @@ class BaseProjectionLayer(nn.Module):
     
 class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
     def __init__(self, input_dims, hidden_dims, output_dims, device, use_revin=True, dtype=torch.float32, lose_type='mae', **kwargs):
-        super().__init__(lose_type, device=device, **kwargs)
+        super().__init__("lstm_encoder", lose_type, device=device, **kwargs)
 
         self.dtype = dtype
         self.device = device
@@ -133,16 +132,13 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
 
     def forward(self, x, mask=None, training=True):
         # Implement the full forward pass for masked autoencoder (including decoder)
-        # if training:
-        #     x                           = mask_input(x)
+        # if training:  x                           = mask_input(x)
 
         if self.use_revin:
             x                       = self.revin_layer(x, 'norm')
-        
-        enc_output, (_, _)        = self.encoder(x)
-        x_decoded, _            = self.lstm_decoder(enc_output)
-        x_decoded               = self.linear_decoder(x_decoded)
-        
+        enc_output, (_, _)          = self.encoder(x)
+        x_decoded, _                = self.lstm_decoder(enc_output)
+        x_decoded                   = self.linear_decoder(x_decoded)
         if self.use_revin:
             x_decoded               = self.revin_layer(x_decoded, 'denorm')
        
@@ -151,15 +147,11 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
     def encode(self, x, type_of_pooling='', training=True):
         # Implement forward pass for masked autoencoder
         # For the TSFM model, we only need the embeddings, so we only return the output of the encoder.
-
-        # if training:
-        #     x              = mask_input(x)
+        # if training:  x              = mask_input(x)
 
         if self.use_revin:
             x              = self.revin_layer(x, 'norm')
-
         enc_output, (_, _) = self.encoder(x) 
-       
 
         if type_of_pooling=='last':
             enc_output = enc_output[:, -1, :]
@@ -172,9 +164,13 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
     
 
 
+
+
+
+
 class Conv1DLSTMProjectionEncoder(BaseProjectionLayer):
     def __init__(self, input_dims, output_dims, out_channels=12, kernel_size=5, padding=1, **kwargs):
-        super().__init__()
+        super().__init__("conv1d_encoder")
         # Define the architecture for Conv1D encoder
 
         self.con1d  = nn.Conv1d(input_dims[1], out_channels, kernel_size=kernel_size, padding=padding)
@@ -192,7 +188,7 @@ class Conv1DLSTMProjectionEncoder(BaseProjectionLayer):
 
 class VAEProjectionLayer(BaseProjectionLayer):
     def __init__(self, input_dims, hidden_dims, output_dims):
-        super().__init__()
+        super().__init__("vae")
         # Define the architecture for VAE
         self.encoder = nn.Sequential(
             # ...
@@ -207,7 +203,7 @@ class VAEProjectionLayer(BaseProjectionLayer):
 
 class TS2VECEncoderProjection(BaseProjectionLayer):
     def __init__(self, input_dims, hidden_dims, output_dims):
-        super().__init__()
+        super().__init__("ts2vec")
         # Define the architecture for TS2VEC encoder
         self.encoder = nn.Sequential(
             # ...

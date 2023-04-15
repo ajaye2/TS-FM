@@ -117,7 +117,10 @@ def masking(x, keepratio=0.9, mask= 'binomial'):
 
 def jitter(x, sigma=0.8):
     # https://arxiv.org/pdf/1706.00527.pdf
-    return x + np.random.normal(loc=0., scale=sigma, size=x.shape)
+    noise        = np.random.normal(loc=0., scale=sigma, size=x.shape)
+    if type(x) == torch.Tensor:
+        noise = torch.tensor(noise, dtype=x.dtype).to(x.device)
+    return x + noise
 
 
 def scaling(x, sigma=1.1):

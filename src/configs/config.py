@@ -25,7 +25,16 @@ class Config(object):
                 max_seg = 5,
                 hidden_dim = 100,
                 timesteps = 10,
-                TSlength_aligned = 1500
+                TSlength_aligned = 1500,
+                n_head=2,
+                num_transformer_layers=2,
+                linear_encoder_dim=256,
+                encoder_layer_dims=128,
+                dim_feedforward=128,
+                channel_output_size=10,
+                time_output_size=10,
+                batch_first=True,
+                lam  = 0.2
                 ):
         # model configs
         self.input_channels = input_channels
@@ -40,6 +49,15 @@ class Config(object):
         self.features_len_f = features_len_f  # 13 #self.features_len   # the output results in time domain
 
         self.TSlength_aligned = TSlength_aligned
+
+        self.n_head = n_head
+        self.num_transformer_layers = num_transformer_layers
+        self.linear_encoder_dim = linear_encoder_dim
+        self.encoder_layer_dims = encoder_layer_dims
+        self.dim_feedforward = dim_feedforward
+        self.channel_output_size = channel_output_size
+        self.time_output_size = time_output_size
+        self.batch_first = batch_first
 
         # training configs
         self.num_epoch = num_epoch

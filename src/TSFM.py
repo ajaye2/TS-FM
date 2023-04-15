@@ -2,13 +2,19 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from .dataloader import TSDataLoader
-from .dataset import TSDataset
+from .dataset import TSDataset, ImputationDataset
 from .projection_layers import LSTMMaskedAutoencoderProjection
 import numpy as np
 import math
 
-from .TFC import TFC, TFCDataset
+from src.TFC.dataloader import TFCDataset
+from src.TFC.model import TFC
 from .configs import Configs
+
+from .TFC.augmentations import DataTransform_FD, DataTransform_TD
+from .TFC.loss import NTXentLoss_poly, NTXentLoss
+import torch.fft as fft
+
 
 class TSFM:
 
@@ -31,8 +37,9 @@ class TSFM:
         batch_size=16,
         log=False,
         dtype=torch.float32,
-
         max_train_length=None,
+        encoder_config=None
+
     ):
         ''' Initialize a TSFM model.
         
@@ -57,46 +64,63 @@ class TSFM:
         self.log = log
         self.dtype = dtype
         self.encoder_layer = encoder_layer
+        self.projection_layer_encoder = projection_layer_encoder
+        self.depth = depth
+        self.encoder_config = encoder_config
+        
 
         self.projection_layers = {}
         self._projection_layers = {}
+        self.configs = {}
         
         for dataset_name, data_shape in input_data_shapes_dict.items():
             assert len(data_shape) == 2
             self._projection_layers[dataset_name] = self.get_projection_layer(data_shape, projection_layer_encoder)
             self.projection_layers[dataset_name] = torch.optim.swa_utils.AveragedModel(self._projection_layers[dataset_name])
             self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
+            self.configs[dataset_name] = {}
 
-        # self._encoder = Encoder(encoder_layer, encoder_layer_dims, depth).to(self.device)
-        # self.encoder = torch.optim.swa_utils.AveragedModel(self._encoder)
-        # self.encoder.update_parameters(self._encoder)
+        self._encoder = self.get_encoder_layer()  #Encoder(encoder_layer, encoder_layer_dims, depth).to(self.device)
+        self.encoder = torch.optim.swa_utils.AveragedModel(self._encoder)
+        self.encoder.update_parameters(self._encoder)
         
 
         self.n_epochs = 0
         self.n_iters = 0
+    
+    def get_encoder_layer(self):
+        if self.encoder_layer == 'TFC':
+            # configs = Configs(TSlength_aligned=self.max_train_length, 
+            #                   features_len=self.projection_layer_dims, 
+            #                   features_len_f=self.projection_layer_dims,
+            #                   n_head=self.n_head,
+            #                   dim_feedforward=self.dim_feedforward,
+            #                   linear_encoder_dim=self.linear_encoder_dim,
+            #                   encoder_layer_dims=self.encoder_layer_dims,
+            #                   pool_output_size=self.channel_output_size,
+            #                   time_output_size=self.time_output_size
+            #                   )
+            configs = self.encoder_config
+            encoder = TFC(configs).to(self.device)
+        else:
+            raise NotImplementedError(f'Encoder layer {self.encoder_layer} is not implemented.')
+        
+        return encoder
 
     def get_projection_layer(self, data_shape, projection_layer_encoder):
-        proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](data_shape, self.projection_layer_dims, self.projection_layer_dims).to(self.device)
+        proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](data_shape, self.projection_layer_dims, self.projection_layer_dims, device=self.device).to(self.device)
         return proj_layer
     
-    def fit(self, train_data_dict, labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', config_kwargs=None):
-        ''' Training the TSFM model.
-        
-        Args:
-            train_data_dict (dict): The training data. The keys are the names of the datasets, and the values are the datasets. The shapes of the datasets should be in the form of (n_samples, n_timestamps, n_features).
-            n_epochs (Union[int, NoneType]): The number of epochs. When this reaches, the training stops.
-            n_iters (Union[int, NoneType]): The number of iterations. When this reaches, the training stops. If both n_epochs and n_iters are not specified, a default setting would be used that sets n_iters to 200 for a dataset with size <= 100000, 600 otherwise.
-            verbose (bool): Whether to print the training loss after each epoch.
-            
-        Returns:
-            loss_log: a list containing the training losses on each epoch.
-        '''
-        
+    def fit(self, train_data_dict,labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, data_set_type=ImputationDataset, warmup_batch_size=512):
+        """ """
+        # train_data_dict : dict
+
         datasets = {}
         optimizer_list = []#[{ "params": self._encoder.parameters()}]
 
         for dataset_name, train_data in train_data_dict.items():
             assert train_data.ndim == 3
+            
 
             # if self.max_train_length is not None:
             #     sections = train_data.shape[1] // self.max_train_length
@@ -112,27 +136,36 @@ class TSFM:
             
 
             if warmup_projection_layers:
-                self._projection_layers[dataset_name].warmup(TSDataset(train_data), n_epochs=warmup_epochs, batch_size=self.batch_size, learning_rate=self.lr, log=log)
+                batch_size = warmup_batch_size
+                if batch_size > train_data.shape[0]:
+                    batch_size = train_data.shape[0] // 20
 
+                self._projection_layers[dataset_name].warmup(data_set_type(train_data), n_epochs=warmup_epochs, batch_size=batch_size, learning_rate=self.lr, log=log, data_set_type=data_set_type, collate_fn='unsuperv', max_len=self.max_train_length) 
+
+            enocder_dataset_type = TSDataset
             if self.encoder_layer == 'TFC':
                 
                 if labels is None:
-                    # create labels as dummy array with shape (n_samples, 1)
-                    # Labels are not used in pre-training, but are required for the TFCDataset class
-                    labels = torch.zeros((train_data.shape[0], 1))
+                    labels = torch.zeros((train_data.shape[0], 1)) # create labels as dummy array with shape (n_samples, 1), Labels are not used in pre-training, but are required for the TFCDataset class
                 ds = {"samples": train_data, "labels": labels}
 
-                if configs is None:
-                    if config_kwargs is None:
+                
+                if configs is None or dataset_name not in configs:
+                    if warmup_config_kwargs is None or dataset_name not in warmup_config_kwargs:
                         raise ValueError('Either configs or config_kwargs must be specified.')
                     
-                    config_kwargs['batch_size']     = self.batch_size
-                    config_kwargs['input_channels'] = train_data.shape[-1]
-                    config_kwargs['timesteps']      = train_data.shape[1]
+                    # warmup_config_kwargs[dataset_name]['batch_size']     = self.batch_size
+                    # warmup_config_kwargs[dataset_name]['input_channels'] = train_data.shape[-1]
+                    # warmup_config_kwargs[dataset_name]['timesteps']      = train_data.shape[1]
                     
-                    configs = Configs(**config_kwargs)
+                    config = Configs(**warmup_config_kwargs[dataset_name])
+                else:
+                    config = configs[dataset_name]
 
-                datasets[dataset_name] = TFCDataset(ds, configs, training_mode, target_dataset_size=configs.batch_size, subset=subset)
+                self.configs[dataset_name] = config
+
+                # datasets[dataset_name] = TFCDataset(ds, configs, training_mode, target_dataset_size=configs.batch_size, subset=subset)
+                datasets[dataset_name] = TSDataset(train_data)
             else:
                 raise NotImplementedError(f'Encoder {self.encoder_layer} is not implemented yet.')
 
@@ -140,7 +173,7 @@ class TSFM:
             optimizer_list.append({"params": self._projection_layers[dataset_name].encoder.parameters()})
 
             
-        train_loader    = TSDataLoader(datasets, batch_size=self.batch_size, shuffle=shuffle)
+        train_loader    = TSDataLoader(datasets, batch_size=self.batch_size, shuffle=shuffle,max_len=self.max_train_length)
         optimizer       = torch.optim.AdamW(optimizer_list, lr=self.lr)
         
         if n_iters is None and n_epochs is None:
@@ -149,66 +182,115 @@ class TSFM:
         loss_log = {name: [] for name in train_data_dict.keys()}
 
 
-        # while True:
-        #     if n_epochs is not None and self.n_epochs >= n_epochs:
-        #         break
+        while True:
+            if n_epochs is not None and self.n_epochs >= n_epochs:
+                break
             
-        #     cum_loss_dict = {name: 0 for name in train_data_dict.keys()}
-        #     n_epoch_iters = 0
-            
-        #     interrupted = False
-        #     for batch in train_loader:
-        #         if n_iters is not None and self.n_iters >= n_iters:
-        #             interrupted = True
-        #             break
+            cum_loss_dict = {name: 0 for name in train_data_dict.keys()}
+            n_epoch_iters = 0
+            interrupted   = False
 
-        #         for dataset_name, data in batch.items():
-        #             if isinstance(data, tuple) and len(data) == 2:
-        #                 # Unpack data and labels
-        #                 inputs, labels = data
-        #             else:
-        #                 inputs = data
-        #                 labels = None
-                    
-        #             # if self.max_train_length is not None and inputs.size(1) > self.max_train_length:
-        #             #     window_offset = np.random.randint(inputs.size(1) - self.max_train_length + 1)
-        #             #     inputs = inputs[:, window_offset : window_offset + self.max_train_length]
+            for batch in train_loader:
+                if n_iters is not None and self.n_iters >= n_iters:
+                    interrupted = True
+                    break
 
-        #             inputs = inputs.to(self.device)
+                for dataset_name, data in batch.items():
+                    loss = self.train_step(data, dataset_name, optimizer, enocder_dataset_type)
+                    cum_loss_dict[dataset_name] += loss.item()
 
-        #             optimizer.zero_grad()
-
-        #             projected_input = self._projection_layers[dataset_name](inputs)
-
-        #             out = self._encoder(projected_input)
+                n_epoch_iters += 1
+                self.n_iters  += 1
                 
-        #             loss = self.loss(out, labels)
-        #             loss.backward()
-        #             optimizer.step()
-
-        #             self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
-        #             self.encoder.update_parameters(self.encoder)
-                    
-        #             cum_loss_dict[dataset_name] += loss.item()
-
-        #         n_epoch_iters += 1
-        #         self.n_iters  += 1
-                
-        #     if interrupted:
-        #         break
+            if interrupted:
+                break
             
-        #     for dataset_name, cum_loss in cum_loss_dict.items():
-        #         cum_loss /= n_epoch_iters
-        #         loss_log[dataset_name].append(cum_loss)
+            for dataset_name, cum_loss in cum_loss_dict.items():
+                cum_loss /= n_epoch_iters
+                loss_log[dataset_name].append(cum_loss)
 
-        #         if verbose:
-        #             print(f"Epoch #{self.n_epochs}: loss={cum_loss}")
+                if verbose:
+                    print(f"Epoch #{self.n_epochs}: loss={cum_loss}")
 
-        #     self.n_epochs += 1
+            self.n_epochs += 1
     
         return loss_log
 
+    def train_step(self, data, dataset_name, optimizer, data_set_type):
+        optimizer.zero_grad()
 
+        
+        if self.encoder_layer == 'TFC':
+            loss = self._train_step_TFC(data, dataset_name, data_set_type)
+
+        loss.backward()
+        optimizer.step()
+
+        self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
+        self.encoder.update_parameters(self.encoder)
+        
+        return loss
+
+    def _train_step_TFC(self, batch, dataset_name, data_set_type):
+        inputs, targets, target_masks, padding_masks = self.get_inputs(batch, data_set_type)
+
+        config                              = self.configs[dataset_name]
+
+        x_data                              = self._projection_layers[dataset_name](inputs)
+
+        x_data_f                            = fft.fft(x_data).abs()
+
+        # TODO: Check if transformation is done on the time dimension or the feature dimension
+        aug1                                = DataTransform_TD(x_data, config)
+        aug1_f                              = DataTransform_FD(x_data_f, config)
+
+        # transpose so that the time dimension is first
+        x_data                              = x_data.permute(0, 2, 1)
+        x_data_f                            = x_data_f.permute(0, 2, 1)
+        aug1                                = aug1.permute(0, 2, 1)
+        aug1_f                              = aug1_f.permute(0, 2, 1)
+
+        # Produce embeddings
+        h_t, z_t, h_f, z_f                  = self._encoder(x_data, x_data_f)
+        h_t_aug, z_t_aug, h_f_aug, z_f_aug  = self._encoder(aug1, aug1_f)
+
+        # Compute Pre-train loss
+        # NTXentLoss: normalized temperature-scaled cross entropy loss. From SimCLR
+        nt_xent_criterion                   = NTXentLoss_poly(self.device, config.batch_size, config.Context_Cont.temperature,
+                                                config.Context_Cont.use_cosine_similarity) # device, 128, 0.2, True
+        
+        loss_t                              = nt_xent_criterion(h_t, h_t_aug)
+        loss_f                              = nt_xent_criterion(h_f, h_f_aug)
+        l_TF                                = nt_xent_criterion(z_t, z_f) # this is the initial version of TF loss
+
+        l_1, l_2, l_3                       = nt_xent_criterion(z_t, z_f_aug), nt_xent_criterion(z_t_aug, z_f), nt_xent_criterion(z_t_aug, z_f_aug)
+        loss_c                              = (1 + l_TF - l_1) + (1 + l_TF - l_2) + (1 + l_TF - l_3)
+
+        lam                                 = self.encoder_config.lam
+        loss                                = lam*(loss_t + loss_f) + l_TF
+
+        return loss
+
+
+    def get_inputs(self, data, data_set_type):
+        inputs, targets, target_masks, padding_masks = None, None, None, None
+        if data_set_type == ImputationDataset:
+            inputs, targets, target_masks, padding_masks = data
+        elif data_set_type == TSDataset:
+            if len(data) == 2: inputs, targets = data
+            else: inputs, targets = data, data
+
+        if targets is not None:
+            targets = targets.to(self.device)
+        if target_masks is not None:
+            target_masks = target_masks.to(self.device) # 1s: mask and predict, 0s: unaffected input (ignore)
+        if padding_masks is not None:
+            padding_masks = padding_masks.to(self.device)  # 0s: ignore
+        if inputs is not None:
+            inputs = inputs.to(self.device)
+        
+        return inputs, targets, target_masks, padding_masks 
+    
     
     def _eval_with_pooling(self, x, mask=None, slicing=None, encoding_window=None):
         out = self.net(x.to(self.device, non_blocking=True), mask)

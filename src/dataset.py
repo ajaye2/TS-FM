@@ -271,6 +271,42 @@ def collate_unsuperv(data, max_len=None, mask_compensation=False):
     return X, targets, target_masks, padding_masks  # ID REMOVED
 
 
+#TODO: Test for correctness
+def collate_unsuperv_optimized(data, max_len=None, mask_compensation=False):
+    batch_size = len(data)
+    features, masks = zip(*data)
+
+    # Get max_len if not provided
+    if max_len is None:
+        max_len = max([X.shape[0] for X in features])
+
+    # Stack features and masks
+    lengths = torch.tensor([min(X.shape[0], max_len) for X in features], dtype=torch.int64)
+    X = torch.zeros(batch_size, max_len, features[0].shape[-1])
+    target_masks = torch.zeros(batch_size, max_len, features[0].shape[-1], dtype=torch.bool)
+
+    # Index tensor for batch dimension
+    batch_idx = torch.arange(batch_size).unsqueeze(1).expand(-1, max_len)
+
+    # Index tensor for sequence length dimension
+    seq_idx = torch.arange(max_len).expand(batch_size, -1)
+
+    # Create boolean tensor with True values for the valid indices
+    valid_idx = seq_idx < lengths.unsqueeze(1)
+
+    # Assign features and masks to the resulting tensors using valid indices
+    X[batch_idx, seq_idx, :] = torch.stack([X_i[:end, :] for X_i, end in zip(features, lengths.tolist())])[valid_idx.unsqueeze(-1)].view(-1, features[0].shape[-1])
+    target_masks[batch_idx, seq_idx, :] = torch.stack([masks_i[:end, :] for masks_i, end in zip(masks, lengths.tolist())])[valid_idx.unsqueeze(-1)].view(-1, masks[0].shape[-1])
+
+    targets = X.clone()
+    X = X * target_masks  # mask input
+    if mask_compensation:
+        X = compensate_masking(X, target_masks)
+
+    padding_masks = padding_mask(lengths, max_len=max_len)  # (batch_size, padded_length) boolean tensor, "1" means keep
+    target_masks = ~target_masks  # inverse logic: 0 now means ignore, 1 means predict
+    return X, targets, target_masks, padding_masks
+
 def noise_mask(X, masking_ratio, lm=3, mode='separate', distribution='geometric', exclude_feats=None):
     """
     Creates a random boolean mask of the same shape as X, with 0s at places where a feature should be masked.
