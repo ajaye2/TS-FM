@@ -23,15 +23,18 @@ import torch
 
 
 class TSDataset(Dataset):
-    def __init__(self, data, labels=None):
+    def __init__(self, data, labels=None, max_len=None):
         self.data = data
         self.labels = labels
         self.labels_passed = labels is not None
+        self.max_len = max_len
 
     def __getitem__(self, index):
-        if self.labels_passed:
-            return self.data[index], self.labels[index]
-        return self.data[index]
+        length = [self.data[index].shape[0]]
+        padding_masks = padding_mask(torch.tensor(length, dtype=torch.int16), max_len=self.max_len) 
+        padding_masks = padding_masks.squeeze(0)
+        labels = self.labels[index] if self.labels_passed else self.data[index] # if labels are not passed, use the data as labels
+        return self.data[index], labels, padding_masks
 
     def __len__(self):
         return len(self.data)

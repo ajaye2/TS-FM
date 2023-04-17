@@ -135,10 +135,8 @@ class BaseProjectionLayer(nn.Module):
         if data_set_type == ImputationDataset:
             inputs, targets, target_masks, padding_masks = data
         elif data_set_type == TSDataset:
-            if len(data) == 2:
-                inputs, targets = data
-            else:
-                inputs, targets = data, data
+            inputs, targets, padding_masks = data
+           
 
         if targets is not None:
             targets = targets.to(self.device)

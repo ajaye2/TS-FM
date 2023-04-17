@@ -37,7 +37,7 @@ class TSFM:
         batch_size=16,
         log=False,
         dtype=torch.float32,
-        max_train_length=None,
+        max_seq_length=None,
         encoder_config=None
 
     ):
@@ -58,7 +58,7 @@ class TSFM:
         self.device = device
         self.lr = lr
         self.batch_size = batch_size
-        self.max_train_length = max_train_length
+        self.max_seq_length = max_seq_length
         self.projection_layer_dims = projection_layer_dims
         self.encoder_layer_dims = encoder_layer_dims
         self.log = log
@@ -90,7 +90,7 @@ class TSFM:
     
     def get_encoder_layer(self):
         if self.encoder_layer == 'TFC':
-            # configs = Configs(TSlength_aligned=self.max_train_length, 
+            # configs = Configs(TSlength_aligned=self.max_seq_length, 
             #                   features_len=self.projection_layer_dims, 
             #                   features_len_f=self.projection_layer_dims,
             #                   n_head=self.n_head,
@@ -122,8 +122,8 @@ class TSFM:
             assert train_data.ndim == 3
             
 
-            # if self.max_train_length is not None:
-            #     sections = train_data.shape[1] // self.max_train_length
+            # if self.max_seq_length is not None:
+            #     sections = train_data.shape[1] // self.max_seq_length
             #     if sections >= 2:
             #         train_data = np.concatenate(split_with_nan(train_data, sections, axis=1), axis=0)
             # temporal_missing = np.isnan(train_data).all(axis=-1).any(axis=0)
@@ -140,7 +140,7 @@ class TSFM:
                 if batch_size > train_data.shape[0]:
                     batch_size = train_data.shape[0] // 20
 
-                self._projection_layers[dataset_name].warmup(data_set_type(train_data), n_epochs=warmup_epochs, batch_size=batch_size, learning_rate=self.lr, log=log, data_set_type=data_set_type, collate_fn='unsuperv', max_len=self.max_train_length) 
+                self._projection_layers[dataset_name].warmup(data_set_type(train_data), n_epochs=warmup_epochs, batch_size=batch_size, learning_rate=self.lr, log=log, data_set_type=data_set_type, collate_fn='unsuperv', max_len=self.max_seq_length) 
 
             enocder_dataset_type = TSDataset
             if self.encoder_layer == 'TFC':
@@ -165,7 +165,7 @@ class TSFM:
                 self.configs[dataset_name] = config
 
                 # datasets[dataset_name] = TFCDataset(ds, configs, training_mode, target_dataset_size=configs.batch_size, subset=subset)
-                datasets[dataset_name] = TSDataset(train_data)
+                datasets[dataset_name] = TSDataset(train_data, max_len=self.max_seq_length)
             else:
                 raise NotImplementedError(f'Encoder {self.encoder_layer} is not implemented yet.')
 
@@ -173,7 +173,7 @@ class TSFM:
             optimizer_list.append({"params": self._projection_layers[dataset_name].encoder.parameters()})
 
             
-        train_loader    = TSDataLoader(datasets, batch_size=self.batch_size, shuffle=shuffle,max_len=self.max_train_length)
+        train_loader    = TSDataLoader(datasets, batch_size=self.batch_size, shuffle=shuffle,max_len=self.max_seq_length)
         optimizer       = torch.optim.AdamW(optimizer_list, lr=self.lr)
         
         if n_iters is None and n_epochs is None:
@@ -245,8 +245,8 @@ class TSFM:
         aug1_f                              = DataTransform_FD(x_data_f, config)
 
         # Produce embeddings
-        h_t, z_t, h_f, z_f                  = self._encoder(x_data, x_data_f)
-        h_t_aug, z_t_aug, h_f_aug, z_f_aug  = self._encoder(aug1, aug1_f)
+        h_t, z_t, h_f, z_f                  = self._encoder(x_data, x_data_f, padding_masks)
+        h_t_aug, z_t_aug, h_f_aug, z_f_aug  = self._encoder(aug1, aug1_f, padding_masks)
 
         # Compute Pre-train loss
         # NTXentLoss: normalized temperature-scaled cross entropy loss. From SimCLR
@@ -271,8 +271,7 @@ class TSFM:
         if data_set_type == ImputationDataset:
             inputs, targets, target_masks, padding_masks = data
         elif data_set_type == TSDataset:
-            if len(data) == 2: inputs, targets = data
-            else: inputs, targets = data, data
+            inputs, targets, padding_masks = data
 
         if targets is not None:
             targets = targets.to(self.device)
