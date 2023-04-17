@@ -10,6 +10,16 @@ import logging
 from sklearn.metrics import classification_report, cohen_kappa_score, confusion_matrix, accuracy_score
 from shutil import copy
 
+# Code from https://github.com/mims-harvard/TFC-pretraining
+# ```
+# @inproceedings{zhang2022self,
+# title = {Self-Supervised Contrastive Pre-Training For Time Series via Time-Frequency Consistency},
+# author = {Zhang, Xiang and Zhao, Ziyuan and Tsiligkaridis, Theodoros and Zitnik, Marinka},
+# booktitle = {Proceedings of Neural Information Processing Systems, NeurIPS},
+# year      = {2022}
+# }
+# ```
+
 def set_requires_grad(model, dict_, requires_grad=True):
     for param in model.named_parameters():
         if param[0] in dict_:

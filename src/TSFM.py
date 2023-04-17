@@ -8,7 +8,7 @@ import numpy as np
 import math
 
 from src.TFC.dataloader import TFCDataset
-from src.TFC.model import TFC
+from .encoders import TFC
 from .configs import Configs
 
 from .TFC.augmentations import DataTransform_FD, DataTransform_TD
@@ -243,12 +243,6 @@ class TSFM:
         # TODO: Check if transformation is done on the time dimension or the feature dimension
         aug1                                = DataTransform_TD(x_data, config)
         aug1_f                              = DataTransform_FD(x_data_f, config)
-
-        # transpose so that the time dimension is first
-        x_data                              = x_data.permute(0, 2, 1)
-        x_data_f                            = x_data_f.permute(0, 2, 1)
-        aug1                                = aug1.permute(0, 2, 1)
-        aug1_f                              = aug1_f.permute(0, 2, 1)
 
         # Produce embeddings
         h_t, z_t, h_f, z_f                  = self._encoder(x_data, x_data_f)

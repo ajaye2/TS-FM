@@ -34,7 +34,12 @@ class Config(object):
                 channel_output_size=10,
                 time_output_size=10,
                 batch_first=True,
-                lam  = 0.2
+                lam  = 0.2,
+                d_model=128,
+                pos_encoding='learnable',
+                transformer_activation='gelu',
+                transformer_normalization_layer='LayerNorm', # 'BatchNorm'
+                freeze=False,
                 ):
         # model configs
         self.input_channels = input_channels
@@ -58,6 +63,12 @@ class Config(object):
         self.channel_output_size = channel_output_size
         self.time_output_size = time_output_size
         self.batch_first = batch_first
+        self.lam = lam
+        self.d_model = d_model
+        self.pos_encoding = pos_encoding
+        self.transformer_activation = transformer_activation
+        self.transformer_normalization_layer = transformer_normalization_layer
+        self.freeze = freeze
 
         # training configs
         self.num_epoch = num_epoch
