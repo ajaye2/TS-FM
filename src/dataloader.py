@@ -6,20 +6,27 @@ from .dataset import collate_unsuperv, collate_superv
 
     
 class TSDataLoader:
-    def __init__(self, datasets, batch_size, max_len, shuffle=True, collate_fn=None):
+    def __init__(self, datasets, batch_size, max_len, shuffle=True, collate_fn=None, pad_inputs=False, mask_inputs=True):
         self.datasets = datasets
         self.batch_size = batch_size
         
         if collate_fn is None:
             self.data_loaders = {name: DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True) for name, ds in datasets.items()}
         elif collate_fn == 'unsuperv':
-            self.data_loaders = {name: DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True, collate_fn=lambda x: collate_unsuperv(x, max_len=max_len)) for name, ds in datasets.items()}
+
+            self.data_loaders = {}
+            for name, ds in datasets.items():
+                if name == 'univariate':
+                    self.data_loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True)
+                else:
+                    self.data_loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True, collate_fn=lambda x: collate_unsuperv(x, max_len=max_len, mask_inputs=mask_inputs, pad_inputs=pad_inputs))
+
         elif collate_fn == 'superv':
             self.data_loaders = {name: DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True, collate_fn=lambda x: collate_superv(x, max_len=max_len)) for name, ds in datasets.items()}
 
-        self.dataset_iterators = {name: iter(dl) for name, dl in self.data_loaders.items()}
-        self.dataset_names = list(datasets.keys())
-        self.current_dataset_index = 0
+        self.dataset_iterators      = {name: iter(dl) for name, dl in self.data_loaders.items()}
+        self.dataset_names          = list(datasets.keys())
+        self.current_dataset_index  = 0
 
     def __iter__(self):
         return self

@@ -1,11 +1,13 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from .dataloader import TSDataLoader
 from .dataset import TSDataset, ImputationDataset
-from .projection_layers import LSTMMaskedAutoencoderProjection
+from .projection_layers import LSTMMaskedAutoencoderProjection, MLPMaskedAutoencoderProjection
 import numpy as np
 import math
+from .RevIN import RevIN
 
 from src.TFC.dataloader import TFCDataset
 from .encoders import TFC
@@ -19,7 +21,8 @@ import torch.fft as fft
 class TSFM:
 
     PROJECTION_LAYER_TYPES = {
-        'autoencoder': LSTMMaskedAutoencoderProjection,
+        'lstm': LSTMMaskedAutoencoderProjection,
+        'mlp': MLPMaskedAutoencoderProjection
     }
 
     '''The TSFM model'''
@@ -27,10 +30,9 @@ class TSFM:
     def __init__(
         self,
         input_data_shapes_dict,
-        projection_layer_encoder='autoencoder',
+        projection_layer_encoder='mlp',
         encoder_layer='TFC',
         projection_layer_dims=64,
-        encoder_layer_dims=64,
         depth=10,
         device='cuda',
         lr=0.001,
@@ -38,7 +40,9 @@ class TSFM:
         log=False,
         dtype=torch.float32,
         max_seq_length=None,
-        encoder_config=None
+        encoder_config=None,
+        univariate_forcast_hidden_dim=64,
+        use_revin=True,
 
     ):
         ''' Initialize a TSFM model.
@@ -49,66 +53,74 @@ class TSFM:
         
         super().__init__()
 
+        """Check if GPU is available"""
         with_gpu = torch.cuda.is_available()
         if with_gpu and device == 'cuda':
             device = torch.device("cuda")
         else:
             device = torch.device("cpu")
 
+        """Initialize the model parameters"""
         self.device = device
         self.lr = lr
         self.batch_size = batch_size
         self.max_seq_length = max_seq_length
         self.projection_layer_dims = projection_layer_dims
-        self.encoder_layer_dims = encoder_layer_dims
+        self.encoder_layer_dims = encoder_config.encoder_layer_dims
         self.log = log
         self.dtype = dtype
         self.encoder_layer = encoder_layer
         self.projection_layer_encoder = projection_layer_encoder
         self.depth = depth
         self.encoder_config = encoder_config
-        
-
+        self.n_epochs = 0
+        self.n_iters = 0
         self.projection_layers = {}
         self._projection_layers = {}
         self.configs = {}
+        self.use_revin = use_revin
         
+        """Initialize the projection layers"""
         for dataset_name, data_shape in input_data_shapes_dict.items():
             assert len(data_shape) == 2
-            self._projection_layers[dataset_name] = self.get_projection_layer(data_shape, projection_layer_encoder)
-            self.projection_layers[dataset_name] = torch.optim.swa_utils.AveragedModel(self._projection_layers[dataset_name])
+            use_revin_ = self.use_revin
+            if dataset_name == 'univariate': 
+                use_revin_ = False
+            self._projection_layers[dataset_name] = self.get_projection_layer(data_shape, projection_layer_encoder, use_revin = use_revin_).to(self.device)
+            self.projection_layers[dataset_name]  = torch.optim.swa_utils.AveragedModel(self._projection_layers[dataset_name]).to(self.device)
             self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
             self.configs[dataset_name] = {}
 
-        self._encoder = self.get_encoder_layer()  #Encoder(encoder_layer, encoder_layer_dims, depth).to(self.device)
-        self.encoder = torch.optim.swa_utils.AveragedModel(self._encoder)
+        """Initialize the encoder"""
+        self._encoder = self.get_encoder_layer().to(self.device)  #Encoder(encoder_layer, encoder_layer_dims, depth).to(self.device)
+        self.encoder = torch.optim.swa_utils.AveragedModel(self._encoder).to(self.device)
         self.encoder.update_parameters(self._encoder)
-        
 
-        self.n_epochs = 0
-        self.n_iters = 0
-    
+        """Initialize the univariate forcaster"""
+        self._univariate_forcaster = nn.Sequential(
+            nn.Linear(encoder_config.encoder_layer_dims, univariate_forcast_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(univariate_forcast_hidden_dim, 1)
+        ).to(self.device)
+        self._univariate_forcaster = torch.optim.swa_utils.AveragedModel(self._univariate_forcaster).to(self.device)
+        self._univariate_forcaster.update_parameters(self._univariate_forcaster)
+
+        self.univariate_revin_layer = RevIN(1)
+
+        """Initialize the criterion for univariate forcasting"""
+        self._univariate_forcast_criterion = nn.MSELoss()
+
+
     def get_encoder_layer(self):
         if self.encoder_layer == 'TFC':
-            # configs = Configs(TSlength_aligned=self.max_seq_length, 
-            #                   features_len=self.projection_layer_dims, 
-            #                   features_len_f=self.projection_layer_dims,
-            #                   n_head=self.n_head,
-            #                   dim_feedforward=self.dim_feedforward,
-            #                   linear_encoder_dim=self.linear_encoder_dim,
-            #                   encoder_layer_dims=self.encoder_layer_dims,
-            #                   pool_output_size=self.channel_output_size,
-            #                   time_output_size=self.time_output_size
-            #                   )
-            configs = self.encoder_config
-            encoder = TFC(configs).to(self.device)
+            encoder = TFC(self.encoder_config).to(self.device)
         else:
             raise NotImplementedError(f'Encoder layer {self.encoder_layer} is not implemented.')
         
         return encoder
 
-    def get_projection_layer(self, data_shape, projection_layer_encoder):
-        proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](data_shape, self.projection_layer_dims, self.projection_layer_dims, device=self.device).to(self.device)
+    def get_projection_layer(self, data_shape, projection_layer_encoder, use_revin=True):
+        proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](data_shape, self.projection_layer_dims, self.projection_layer_dims, device=self.device, use_revin=use_revin).to(self.device)
         return proj_layer
     
     def fit(self, train_data_dict,labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, data_set_type=ImputationDataset, warmup_batch_size=512):
@@ -236,6 +248,9 @@ class TSFM:
 
         config                              = self.configs[dataset_name]
 
+        if dataset_name == 'univariate':
+            inputs = self.univariate_revin_layer(inputs, 'norm')
+
         x_data                              = self._projection_layers[dataset_name](inputs)
 
         x_data_f                            = fft.fft(x_data).abs()
@@ -247,6 +262,21 @@ class TSFM:
         # Produce embeddings
         h_t, z_t, h_f, z_f                  = self._encoder(x_data, x_data_f, padding_masks)
         h_t_aug, z_t_aug, h_f_aug, z_f_aug  = self._encoder(aug1, aug1_f, padding_masks)
+
+        univariate_forcast_loss = 0
+        if dataset_name == 'univariate':
+ 
+            embeddings       = torch.cat((z_t, z_f), dim=1)
+            embeddings_aug   = torch.cat((z_t_aug, z_f_aug), dim=1)
+
+            uni_forcast      = self._univariate_forcaster(embeddings)
+            uni_forcast_aug  = self._univariate_forcaster(embeddings_aug)
+
+            uni_forcast      = self.univariate_revin_layer(uni_forcast, 'denorm')
+            uni_forcast_aug  = self.univariate_revin_layer(uni_forcast_aug, 'denorm')
+
+            univariate_forcast_loss = self._univariate_forcast_criterion(uni_forcast, targets) + self._univariate_forcast_criterion(uni_forcast_aug, targets)
+
 
         # Compute Pre-train loss
         # NTXentLoss: normalized temperature-scaled cross entropy loss. From SimCLR
@@ -262,6 +292,7 @@ class TSFM:
 
         lam                                 = self.encoder_config.lam
         loss                                = lam*(loss_t + loss_f) + l_TF
+        loss                                = loss + univariate_forcast_loss
 
         return loss
 

@@ -27,7 +27,8 @@ class TSDataset(Dataset):
         self.data = data
         self.labels = labels
         self.labels_passed = labels is not None
-        self.max_len = max_len
+        self.max_len = data.shape[1] if max_len is None else max_len
+    
 
     def __getitem__(self, index):
         length = [self.data[index].shape[0]]
@@ -233,7 +234,7 @@ def compensate_masking(X, mask):
     return X.shape[-1] * X / num_active
 
 
-def collate_unsuperv(data, max_len=None, mask_compensation=False):
+def collate_unsuperv(data, max_len=None, mask_compensation=False, pad_inputs=False, mask_inputs=True, ):
     """Build mini-batch tensors from a list of (X, mask) tuples. Mask input. Create
     Args:
         data: len(batch_size) list of tuples (X, mask).
@@ -265,7 +266,8 @@ def collate_unsuperv(data, max_len=None, mask_compensation=False):
         target_masks[i, :end, :] = masks[i][:end, :]
 
     targets = X.clone()
-    X = X * target_masks  # mask input
+    if mask_inputs:
+        X = X * target_masks  # mask input
     if mask_compensation:
         X = compensate_masking(X, target_masks)
 

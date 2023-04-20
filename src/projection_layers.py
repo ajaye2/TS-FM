@@ -25,11 +25,11 @@ class BaseProjectionLayer(nn.Module):
         'masked_mse': MaskedLoss(type_of_loss='mse'),
     }
 
-    def __init__(self, type_of_layer: str, lose_type: str = 'mae', device: str = 'cpu', **kwargs) -> None:
+    def __init__(self, type_of_layer: str, loss_type: str = 'mae', device: str = 'cpu', **kwargs) -> None:
         super().__init__()
         self.device = device
-        self.lose_type = lose_type
-        self.loss_function = self.LOSS_FUNCTIONS[lose_type]
+        self.loss_type = loss_type
+        self.loss_function = self.LOSS_FUNCTIONS[loss_type]
         self.normalizer = Normalizer()
         self.type_of_layer = type_of_layer
 
@@ -111,7 +111,7 @@ class BaseProjectionLayer(nn.Module):
         Returns:
             The computed loss for the batch.
         """
-        if 'masked' in self.lose_type:
+        if 'masked' in self.loss_type:
             target_masks = target_masks * padding_masks.unsqueeze(-1)
             loss_per_sample = self.loss_function(y_pred=reconstructed, y_true=targets, mask=target_masks)
             loss = loss_per_sample
@@ -152,7 +152,7 @@ class BaseProjectionLayer(nn.Module):
                
     
 class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
-    def __init__(self, input_dims: Tuple[int], hidden_dims: int, output_dims: int, device: str, use_revin: bool = True, dtype: torch.dtype = torch.float32, lose_type: str = 'mae', **kwargs):
+    def __init__(self, input_dims: Tuple[int], hidden_dims: int, output_dims: int, device: str, use_revin: bool = True, dtype: torch.dtype = torch.float32, loss_type: str = 'mae', **kwargs):
         """
         Initialize the LSTM-based masked autoencoder projection layer.
 
@@ -163,10 +163,10 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
             device: The device to use for computation.
             use_revin: Whether to use the RevIN normalization layer.
             dtype: The data type to use for tensors.
-            lose_type: The type of loss function to use.
+            loss_type: The type of loss function to use.
             kwargs: Additional arguments for the base class.
         """
-        super().__init__("lstm_encoder", lose_type, device=device, **kwargs)
+        super().__init__("lstm_encoder", loss_type, device=device, **kwargs)
 
         self.dtype = dtype
         self.device = device
@@ -226,6 +226,89 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
 
         return enc_output
 
+
+
+class MLPMaskedAutoencoderProjection(BaseProjectionLayer):
+    def __init__(self, input_dims: int, hidden_dims: int, output_dims: int, device: str, use_revin: bool = True, dtype: torch.dtype = torch.float32, loss_type: str = 'mae', **kwargs):
+        """
+        Initialize the MLP-based masked autoencoder projection layer.
+
+        Args:
+            input_dims: Number of input dimensions.
+            hidden_dims: Number of hidden dimensions.
+            output_dims: Number of output dimensions.
+            device: The device to use for computation.
+            use_revin: Whether to use the RevIN normalization layer.
+            dtype: The data type to use for tensors.
+            loss_type: The type of loss function to use.
+            kwargs: Additional arguments for the base class.
+        """
+        super().__init__("mlp_encoder", loss_type, device=device, **kwargs)
+
+        self.dtype = dtype
+        self.device = device
+        self.use_revin = use_revin
+        if use_revin:
+            self.revin_layer = RevIN(input_dims)
+
+        self.encoder = nn.Sequential(
+            nn.Linear(input_dims[1], hidden_dims),
+            nn.ReLU(),
+            nn.Linear(hidden_dims, output_dims)
+        )
+
+        self.decoder = nn.Sequential(
+            nn.Linear(output_dims, hidden_dims),
+            nn.ReLU(),
+            nn.Linear(hidden_dims, input_dims[1])
+        )
+
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None, training: bool = True) -> torch.Tensor:
+        """
+        Implement the full forward pass for masked autoencoder (including decoder).
+
+        Args:
+            x: The input tensor.
+            mask: The mask to apply on the input tensor.
+            training: Whether the model is in training mode.
+
+        Returns:
+            The reconstructed tensor.
+        """
+        if self.use_revin:
+            x = self.revin_layer(x, 'norm')
+        enc_output = self.encoder(x)
+        x_decoded = self.decoder(enc_output)
+        if self.use_revin:
+            x_decoded = self.revin_layer(x_decoded, 'denorm')
+
+        return x_decoded
+
+    def encode(self, x: torch.Tensor, type_of_pooling: str = '', training: bool = True) -> torch.Tensor:
+        """
+        Implement forward pass for masked autoencoder.
+
+        Args:
+            x: The input tensor.
+            type_of_pooling: The type of pooling to use on the output.
+            training: Whether the model is in training mode.
+
+        Returns:
+            The output tensor after applying pooling.
+        """
+        if self.use_revin:
+            x = self.revin_layer(x, 'norm')
+
+        enc_output  = self.encoder(x)
+
+        if type_of_pooling == 'last':
+            enc_output = enc_output[:, -1, :]
+        elif type_of_pooling == 'mean':
+            enc_output = torch.mean(enc_output, dim=1)
+        elif type_of_pooling == 'max':
+            pass
+
+        return enc_output
     
 
 
