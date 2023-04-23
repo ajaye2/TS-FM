@@ -123,7 +123,7 @@ class TSFM:
         proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](data_shape, self.projection_layer_dims, self.projection_layer_dims, device=self.device, use_revin=use_revin).to(self.device)
         return proj_layer
     
-    def fit(self, train_data_dict,labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, data_set_type=ImputationDataset, warmup_batch_size=512):
+    def fit(self, train_data_dict,labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, data_set_type=ImputationDataset, warmup_batch_size=512, kwargs=None):
         """ """
         # train_data_dict : dict
 
@@ -152,7 +152,11 @@ class TSFM:
                 if batch_size > train_data.shape[0]:
                     batch_size = train_data.shape[0] // 20
 
-                self._projection_layers[dataset_name].warmup(data_set_type(train_data), n_epochs=warmup_epochs, batch_size=batch_size, learning_rate=self.lr, log=log, data_set_type=data_set_type, collate_fn='unsuperv', max_len=self.max_seq_length) 
+                if dataset_name == 'univariate':
+                    dataset_class_instance = TSDataset(train_data, **kwargs)
+                else:
+                    dataset_class_instance = data_set_type(train_data, **kwargs)
+                self._projection_layers[dataset_name].warmup(data_set_type(train_data, **kwargs), n_epochs=warmup_epochs, batch_size=batch_size, learning_rate=self.lr, log=log, data_set_type=data_set_type, collate_fn='unsuperv', max_len=self.max_seq_length) 
 
             enocder_dataset_type = TSDataset
             if self.encoder_layer == 'TFC':
@@ -328,7 +332,7 @@ class TSFM:
         else:
             pass
             
-        return out.cpu()
+        # return out.cpu()
     
     def encode(self, data, batch_size=None, encoding_window=None):
         ''' Compute representations using the model.

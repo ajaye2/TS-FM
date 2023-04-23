@@ -23,7 +23,7 @@ import torch
 
 
 class TSDataset(Dataset):
-    def __init__(self, data, labels=None, max_len=None):
+    def __init__(self, data, labels=None, max_len=None, **kwargs):
         self.data = data
         self.labels = labels
         self.labels_passed = labels is not None
@@ -50,7 +50,7 @@ class ImputationDataset(Dataset):
     """
 
     def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,
-                 mode='separate', distribution='geometric', exclude_feats=None):
+                 mode='separate', distribution='geometric', exclude_feats=None, **kwargs):
         super(ImputationDataset, self).__init__()
 
         self.data = data 
