@@ -58,6 +58,49 @@ def create_3d_array(df, indices, T):
 
     return np.array( result )
 
+def generate_univariate_data_labels(array):
+
+    data, labels = [], []
+    num_points   = array.shape[0]
+    len_ts       = array.shape[1]
+    num_channels = array.shape[2]
+
+    for i in range(num_points - len_ts):
+        for channel in range(num_channels):
+            x = array[i][:, channel]
+            y = array[i+len_ts][:, channel]
+
+            x = np.expand_dims(x, axis=1)
+            y = np.expand_dims(y, axis=1)
+
+            data.append(x)
+            labels.append(y)
+        
+    data     = np.array(data)
+    labels   = np.array(labels)
+
+    return data, labels
+    
+def generate_data_labels_from_3d_array(array):
+
+    data, labels = [], []
+    num_points   = array.shape[0]
+    len_ts       = array.shape[1]
+    num_channels = array.shape[2]
+
+    for i in range(num_points - len_ts):
+        
+        x = array[i][:, ]
+        y = array[i+len_ts][:, ]
+
+        data.append(x)
+        labels.append(y)
+        
+    data     = np.array(data)
+    labels   = np.array(labels)
+
+    return data, labels
+
 
 def standardize(df, look_back, type='standard'):
     """

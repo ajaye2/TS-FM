@@ -40,6 +40,7 @@ class Config(object):
                 transformer_activation='gelu',
                 transformer_normalization_layer='LayerNorm', # 'BatchNorm'
                 freeze=False,
+                model_configs={},
                 ):
         # model configs
         self.input_channels = input_channels
@@ -90,6 +91,8 @@ class Config(object):
         self.TC = TC(hidden_dim, timesteps)
         self.augmentation = augmentations( jitter_scale_ratio, jitter_ratio, max_seg )
 
+        self.model = ModelConfig(**model_configs)
+
         
 
 
@@ -122,3 +125,48 @@ class TC(object):
                 ):
         self.hidden_dim = hidden_dim
         self.timesteps  = timesteps
+
+
+class ModelConfig(object):
+    def __init__(self,
+                 task_name='forecast',
+                 enc_in=7,
+                 dec_in=7,
+                 c_out=7,
+                 d_model=32,
+                 n_heads=4,
+                 e_layers=2,
+                 d_layers=1,
+                 d_ff=64,
+                 dropout=0.1,
+                 activation='relu',
+                 factor=5,
+                 freq='h',
+                 embed='fixed',
+                 output_attention=False,
+                 distil=True,
+                 pred_len=24,
+                 label_len=24,
+                 num_class=1,
+                 **kwargs):
+        self.task_name = task_name
+        self.enc_in = enc_in
+        self.dec_in = dec_in
+        self.c_out = c_out
+        self.d_model = d_model
+        self.n_heads = n_heads
+        self.e_layers = e_layers
+        self.d_layers = d_layers
+        self.d_ff = d_ff
+        self.dropout = dropout
+        self.activation = activation
+        self.factor = factor
+        self.freq = freq
+        self.embed = embed
+        self.output_attention = output_attention
+        self.distil = distil
+        self.pred_len = pred_len
+        self.label_len = label_len
+        self.num_class = num_class
+        for k, v in kwargs.items():
+            setattr(self, k, v)

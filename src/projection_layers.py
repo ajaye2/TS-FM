@@ -11,6 +11,7 @@ from torchmetrics import MeanAbsolutePercentageError, MeanSquaredLogError
 from .dataset import TSDataset, ImputationDataset, collate_unsuperv, collate_superv
 from .mvts_transformer import *
 from .mvts_transformer.ts_transformer import _get_activation_fn
+from torch.optim.lr_scheduler import StepLR , ReduceLROnPlateau
 
 
 class BaseProjectionLayer(nn.Module):
@@ -38,7 +39,10 @@ class BaseProjectionLayer(nn.Module):
     def forward(self, x: torch.Tensor, mask: torch.Tensor = None, training: bool = True) -> torch.Tensor:
         raise NotImplementedError
 
-    def warmup(self, dataset: Union[TSDataset, ImputationDataset], max_len: int, n_epochs: int = 10, batch_size: int = 64, learning_rate: float = 0.001, log: bool = False, data_set_type: Type = TSDataset, collate_fn: str = 'unsuperv') -> None:
+    def warmup(self, dataset: Union[TSDataset, ImputationDataset], max_len: int, 
+                     n_epochs: int = 10, batch_size: int = 64, learning_rate: float = 0.001, 
+                     log: bool = False, data_set_type: Type = TSDataset, collate_fn: str = 'unsuperv', 
+                     scheduler_step_size: int = 30, scheduler_gamma: float=0.1, verbose: bool = False, **kwargs) -> None:
         """
         Warmup function to train the autoencoder.
 
@@ -71,13 +75,19 @@ class BaseProjectionLayer(nn.Module):
         # Define the loss function and optimizer
         optimizer = optim.Adam(self.parameters(), lr=learning_rate)
 
+        # Add the learning rate scheduler
+        # scheduler = StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
+        # scheduler = ReduceLROnPlateau(optimizer, 'min', verbose=verbose)
+
+        # Keep track of the losses
         losses    = []
+
         # Train the autoencoder for n_epochs
         for epoch in range(n_epochs):
             cum_loss = 0
             for data in data_loader:
                 # Get the inputs
-                inputs, targets, target_masks, padding_masks = self.get_inputs(data, data_set_type)
+                inputs, targets, target_masks, padding_masks, data_time_feat, label_time_feat = self.get_inputs(data, data_set_type)
 
                 # Zero the gradients
                 optimizer.zero_grad()
@@ -97,8 +107,15 @@ class BaseProjectionLayer(nn.Module):
                 # Update the cumulative loss
                 with torch.no_grad():
                     cum_loss += loss.item()
+
+            # Update the learning rate
+            # scheduler.step(cum_loss)
+
+            # Print the loss
             if log:
                 print(f'Epoch: {epoch}, Loss: {cum_loss / len(data_loader)}')
+
+            # Save the loss
             losses.append(cum_loss / len(data_loader))
 
         return losses 
@@ -136,11 +153,17 @@ class BaseProjectionLayer(nn.Module):
         Returns:
             Tuple of input, targets, target_masks, and padding_masks tensors.
         """
+        
         inputs, targets, target_masks, padding_masks = None, None, None, None
+        data_time_feat, label_time_feat              = None, None
+
         if data_set_type == ImputationDataset:
             inputs, targets, target_masks, padding_masks = data
         elif data_set_type == TSDataset:
-            inputs, targets, padding_masks = data
+            if len(data) == 3:
+                inputs, targets, padding_masks = data
+            else:
+                inputs, targets, padding_masks, data_time_feat, label_time_feat = data
            
 
         if targets is not None:
@@ -151,10 +174,13 @@ class BaseProjectionLayer(nn.Module):
             padding_masks = padding_masks.to(self.device)  # 0s: ignore
         if inputs is not None:
             inputs = inputs.to(self.device)
+        if data_time_feat is not None:
+            data_time_feat = data_time_feat.to(self.device)
+        if label_time_feat is not None:
+            label_time_feat = label_time_feat.to(self.device)
         
-        return inputs, targets, target_masks, padding_masks
+        return inputs, targets, target_masks, padding_masks, data_time_feat, label_time_feat
 
-               
     
 class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
     def __init__(self, input_dims: int, hidden_dims: int, output_dims: int, device: str, use_revin: bool = True, dtype: torch.dtype = torch.float32, loss_type: str = 'mae', use_gru=False, **kwargs):
@@ -162,7 +188,7 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
         Initialize the LSTM-based masked autoencoder projection layer.
 
         Args:
-            input_dims: Tuple containing the input dimensions.
+            input_dims: int containing the input dimension.
             hidden_dims: Number of hidden dimensions.
             output_dims: Number of output dimensions.
             device: The device to use for computation.
@@ -399,7 +425,7 @@ class TransformerEncoderProjectionLayer(BaseProjectionLayer):
 
         return output
 
-    def encode(self, X , padding_masks, training: bool = True):
+    def encode(self, X , padding_masks, training: bool = True, type_of_pooling: str = '',):
 
         if self.use_revin:
             X = self.revin_layer(X, 'norm')
@@ -413,6 +439,12 @@ class TransformerEncoderProjectionLayer(BaseProjectionLayer):
         output = self.transformer_encoder(inp, src_key_padding_mask=~padding_masks)  # (seq_length, batch_size, d_model)
         output = self.act(output)  # the output transformer encoder/decoder embeddings don't include non-linearity
         output = output.permute(1, 0, 2)  # (batch_size, seq_length, d_model)
+
+        if type_of_pooling == 'last':
+            output = output[:, -1, :]
+        elif type_of_pooling == 'mean':
+            output = torch.mean(output, dim=1)
+
 
         return output
 

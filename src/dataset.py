@@ -22,24 +22,57 @@ import torch
     # }
 
 
+# class TSDataset(Dataset):
+#     def __init__(self, data, labels=None, max_len=None, **kwargs):
+#         self.data = data
+#         self.labels = labels
+#         self.labels_passed = labels is not None
+#         self.max_len = data.shape[1] if max_len is None else max_len
+    
+
+#     def __getitem__(self, index):
+#         length = [self.data[index].shape[0]]
+#         padding_masks = padding_mask(torch.tensor(length, dtype=torch.int16), max_len=self.max_len) 
+#         padding_masks = padding_masks.squeeze(0)
+#         labels = self.labels[index] if self.labels_passed else self.data[index] # if labels are not passed, use the data as labels
+#         return self.data[index], labels, padding_masks
+
+#     def __len__(self):
+#         return len(self.data)
+
 class TSDataset(Dataset):
-    def __init__(self, data, labels=None, max_len=None, **kwargs):
+    def __init__(self, data, labels=None, data_time_feat=None, label_time_feat=None, max_len=None, shuffle=False, **kwargs):
         self.data = data
         self.labels = labels
         self.labels_passed = labels is not None
         self.max_len = data.shape[1] if max_len is None else max_len
-    
+        self.shuffle = shuffle
+        self.indices = np.arange(len(data))
+        self.data_time_feat = data_time_feat
+        self.label_time_feat = label_time_feat
+
+        if self.shuffle:
+            self.shuffle_indices()
 
     def __getitem__(self, index):
-        length = [self.data[index].shape[0]]
+        shuffled_index = self.indices[index]
+        length = [self.data[shuffled_index].shape[0]]
         padding_masks = padding_mask(torch.tensor(length, dtype=torch.int16), max_len=self.max_len) 
         padding_masks = padding_masks.squeeze(0)
-        labels = self.labels[index] if self.labels_passed else self.data[index] # if labels are not passed, use the data as labels
-        return self.data[index], labels, padding_masks
+        labels = self.labels[shuffled_index] if self.labels_passed else self.data[shuffled_index] 
+
+        if self.data_time_feat is not None:
+            data_time_feat = self.data_time_feat[shuffled_index]
+            label_time_feat = self.label_time_feat[shuffled_index]
+            return self.data[shuffled_index], labels, padding_masks, data_time_feat, label_time_feat
+        
+        return self.data[shuffled_index], labels, padding_masks
 
     def __len__(self):
         return len(self.data)
 
+    def shuffle_indices(self):
+        np.random.shuffle(self.indices)
 
 
 class ImputationDataset(Dataset):

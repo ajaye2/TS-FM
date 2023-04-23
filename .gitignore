@@ -7,6 +7,7 @@ __pycache__/
 *.so
 
 KEYS.py
+src/KEYS.py
 
 # Distribution / packaging
 .Python
