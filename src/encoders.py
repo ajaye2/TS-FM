@@ -59,7 +59,7 @@ class TFC(nn.Module):
             nn.Linear(configs.linear_encoder_dim, configs.encoder_layer_dims)
         )
 
-    def forward(self, x_in_t: torch.Tensor, x_in_f: torch.Tensor, padding_masks: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(self, x_in_t: torch.Tensor, x_in_f: torch.Tensor, padding_masks: torch.Tensor, encode: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Perform forward pass for the TFC module.
 
@@ -80,22 +80,26 @@ class TFC(nn.Module):
         h_freq = self.adaptive_pool_f(f)
         z_freq = self.projector_f(h_freq)
 
+        if encode:
+            embeddings = torch.cat((z_time, z_freq), dim=1)
+            return embeddings
+
         return h_time, z_time, h_freq, z_freq
 
-    def encode(self, x_in_t: torch.Tensor, x_in_f: torch.Tensor) -> torch.Tensor:
-        """
-        Encode the input tensors.
+    # def encode(self, x_in_t: torch.Tensor, x_in_f: torch.Tensor, padding_masks: torch.Tensor ) -> torch.Tensor:
+    #     """
+    #     Encode the input tensors.
 
-        Args:
-            x_in_t: Time-based input tensor.
-            x_in_f: Frequency-based input tensor.
+    #     Args:
+    #         x_in_t: Time-based input tensor.
+    #         x_in_f: Frequency-based input tensor.
 
-        Returns:
-            Embeddings tensor.
-        """
-        h_time, z_time, h_freq, z_freq = self.forward(x_in_t, x_in_f)
-        embeddings = torch.cat((z_time, z_freq), dim=1)
-        return embeddings
+    #     Returns:
+    #         Embeddings tensor.
+    #     """
+    #     h_time, z_time, h_freq, z_freq = self.forward(x_in_t, x_in_f, padding_masks)
+    #     embeddings = torch.cat((z_time, z_freq), dim=1)
+    #     return embeddings
 
 
 

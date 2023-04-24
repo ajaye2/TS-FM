@@ -36,7 +36,7 @@ class BaseProjectionLayer(nn.Module):
         self.normalizer = Normalizer()
         self.type_of_layer = type_of_layer
 
-    def forward(self, x: torch.Tensor, mask: torch.Tensor = None, training: bool = True) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: torch.Tensor = None, encode: bool= False) -> torch.Tensor:
         raise NotImplementedError
 
     def warmup(self, dataset: Union[TSDataset, ImputationDataset], max_len: int, 
@@ -60,6 +60,7 @@ class BaseProjectionLayer(nn.Module):
             None.
         """
         # Create a DataLoader for the warmup data
+        # print(type(dataset))
         assert isinstance(dataset, (TSDataset, ImputationDataset))
 
         if collate_fn == 'unsuperv' and isinstance(dataset, ImputationDataset):
@@ -223,49 +224,51 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
             nn.Linear(hidden_dims//2, input_dims)
         ).to(device)
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None, training: bool = True) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None, encode: bool= False, type_of_pooling: str="") -> torch.Tensor:
         """
         Implement the full forward pass for masked autoencoder (including decoder).
 
         Args:
             x: The input tensor.
             mask: The mask to apply on the input tensor.
-            training: Whether the model is in training mode.
 
         Returns:
             The reconstructed tensor.
         """
         if self.use_revin:
             x = self.revin_layer(x, 'norm')
+
         if self.use_gru:
             enc_output, _ = self.encoder(x)
         else:
             enc_output, (_, _) = self.encoder(x)
+        
+        if encode:
+            return self.encode(enc_output, type_of_pooling=type_of_pooling)
+
         if self.use_gru:
             x_decoded, _ = self.lstm_decoder(enc_output)
         else:
             x_decoded, _ = self.lstm_decoder(enc_output)
+
         x_decoded = self.linear_decoder(x_decoded)
+
         if self.use_revin:
             x_decoded = self.revin_layer(x_decoded, 'denorm')
 
         return x_decoded
 
-    def encode(self, x: torch.Tensor, type_of_pooling: str = '', mask: Optional[torch.Tensor] = None, training: bool = True) -> torch.Tensor:
+    def encode(self, enc_output: torch.Tensor, type_of_pooling: str = '') -> torch.Tensor:
         """
         Implement forward pass for masked autoencoder.
 
         Args:
             x: The input tensor.
             type_of_pooling: The type of pooling to use on the output.
-            training: Whether the model is in training mode.
 
         Returns:
             The output tensor after applying pooling.
         """
-        if self.use_revin:
-            x = self.revin_layer(x, 'norm')
-        enc_output, (_, _) = self.encoder(x)
 
         if type_of_pooling == 'last':
             enc_output = enc_output[:, -1, :]
@@ -317,14 +320,13 @@ class MLPMaskedAutoencoderProjection(BaseProjectionLayer):
             nn.Linear(hidden_dims, input_dims)
         ).to(device)
 
-    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None, training: bool = True) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None, encode: bool= False) -> torch.Tensor:
         """
         Implement the full forward pass for masked autoencoder (including decoder).
 
         Args:
             x: The input tensor.
             mask: The mask to apply on the input tensor.
-            training: Whether the model is in training mode.
 
         Returns:
             The reconstructed tensor.
@@ -338,14 +340,14 @@ class MLPMaskedAutoencoderProjection(BaseProjectionLayer):
 
         return x_decoded
 
-    def encode(self, x: torch.Tensor, type_of_pooling: str = '', mask: Optional[torch.Tensor] = None, training: bool = True) -> torch.Tensor:
+    def encode(self, x: torch.Tensor, type_of_pooling: str = '', mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Implement forward pass for masked autoencoder.
 
         Args:
             x: The input tensor.
             type_of_pooling: The type of pooling to use on the output.
-            training: Whether the model is in training mode.
+          
 
         Returns:
             The output tensor after applying pooling.
@@ -404,7 +406,7 @@ class TransformerEncoderProjectionLayer(BaseProjectionLayer):
 
         self.feat_dim = input_dims
 
-    def forward(self, X, padding_masks, training: bool = True):
+    def forward(self, X, padding_masks, encode: bool= False):
         """
         Args:
             X: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
@@ -414,8 +416,7 @@ class TransformerEncoderProjectionLayer(BaseProjectionLayer):
         """
 
         output = self.encode(X, padding_masks)
-        if training:
-            output = self.dropout1(output)
+        output = self.dropout1(output)
         # Most probably defining a Linear(d_model,feat_dim) vectorizes the operation over (seq_length, batch_size).
         output = self.output_layer(output)  # (batch_size, seq_length, feat_dim)
 
@@ -424,7 +425,7 @@ class TransformerEncoderProjectionLayer(BaseProjectionLayer):
 
         return output
 
-    def encode(self, X , padding_masks, training: bool = True, type_of_pooling: str = '',):
+    def encode(self, X , padding_masks, type_of_pooling: str = '',):
 
         if self.use_revin:
             X = self.revin_layer(X, 'norm')

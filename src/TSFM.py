@@ -127,7 +127,9 @@ class TSFM:
         """Warmup the projection layers"""
         datasets, optimizer_list, encoder_dataset_type = self.warmup(train_data_dict, warmup_projection_layers=warmup_projection_layers, 
                                                                      warmup_epochs=warmup_epochs, shuffle=shuffle, 
-                                                                     warmup_config_kwargs=warmup_config_kwargs, warmup_batch_size=warmup_batch_size, **kwargs)
+                                                                     warmup_config_kwargs=warmup_config_kwargs, warmup_batch_size=warmup_batch_size, 
+                                                                     lr=lr, **kwargs
+                                                                     )
         
         """Disable revIN for univariate forcasting"""
         if 'univariate' in self.projection_layers.keys():
@@ -182,7 +184,7 @@ class TSFM:
     
         return loss_dict
     
-    def warmup(self, train_data_dict, labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, warmup_batch_size=512, **kwargs):
+    def warmup(self, train_data_dict, labels=None, lr=1e-2, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, warmup_batch_size=512, **kwargs):
 
         """Initialize data set dict and optimizer list"""
         datasets       = {}
@@ -215,7 +217,8 @@ class TSFM:
                 n_epochs = warmup_epochs if 'n_epochs' not in warmup_config else warmup_config['n_epochs']
                 batch_s  = batch_size if 'batch_size' not in warmup_config else warmup_config['batch_size']
                 pl_kwargs = warmup_config['kwargs'] if 'kwargs' in warmup_config else {}
-                self._projection_layers[dataset_name].warmup(dataset, n_epochs=n_epochs, batch_size=batch_s, learning_rate=lr, 
+                pl_lr    = lr if 'lr' not in warmup_config else warmup_config['lr']
+                self._projection_layers[dataset_name].warmup(dataset, n_epochs=n_epochs, batch_size=batch_s, learning_rate=pl_lr, 
                                                              log=log, data_set_type=warmup_config['data_set_type'], 
                                                              collate_fn='unsuperv', max_len=self.max_seq_length, 
                                                              dataset_name=dataset_name,
@@ -279,7 +282,7 @@ class TSFM:
         label_time_feat                     = data_inputs[5]
         
         """Get the projections"""
-        x_data                              = self._projection_layers[dataset_name].encode(inputs)
+        x_data                              = self._projection_layers[dataset_name](inputs, encode=True)
         x_data_f                            = fft.fft(x_data).abs()
         aug1                                = DataTransform_TD(x_data, config) # TODO: Check if transformation is done on the time dimension or the feature dimension
         aug1_f                              = DataTransform_FD(x_data_f, config)
@@ -381,22 +384,8 @@ class TSFM:
                                                                            ).to(self.device)
         return proj_layer
     
-    def _eval_with_pooling(self, x, encoding_window=None):
-        #TODO: Implement slicing and encoding_window
-        # out = self.encoder(x.to(self.device, non_blocking=True), mask)
-        if encoding_window == 'full_series':
-            pass
-        elif isinstance(encoding_window, int):
-            pass
-        elif encoding_window == 'multiscale':
-            pass
-        else:
-            pass
-            
-        # return out.cpu()
-
     
-    def encode(self, data, batch_size, encoding_window=None):
+    def encode(self, data, batch_size, dataset_name, encoding_window=None):
         ''' Compute representations using the model.
         
         Args:
@@ -407,20 +396,60 @@ class TSFM:
         assert self.encoder is not None, 'please train or load a encoder first'
         assert data.ndim == 3
  
-        n_samples, ts_l, _ = data.shape
-
-        org_training = self.encoder.training
         self.encoder.eval()
+        self.projection_layers[dataset_name].eval()
         
-        dataset = TensorDataset(torch.from_numpy(data).to(torch.float))
-        loader = DataLoader(dataset, batch_size=batch_size)
+        if type(data) == np.ndarray:
+            data              = torch.from_numpy(data).to(torch.float32)
+        dataset           = TSDataset(data, shuffle=False)
+        loader            = DataLoader(dataset, batch_size=batch_size, drop_last=False, shuffle=False, num_workers=0)
+        representations   = []
         
         with torch.no_grad():
-            pass
-            #TODO: implement sliding inference
+            for batch in loader:
+                data_inputs                         = self.get_inputs(batch, TSDataset, dataset_name)
+                inputs                              = data_inputs[0]
+                targets                             = data_inputs[1]
+                target_masks                        = data_inputs[2]
+                padding_masks                       = data_inputs[3]
+                data_time_feat                      = data_inputs[4]
+                label_time_feat                     = data_inputs[5]
 
-        self.encoder.train(org_training)
-        return None
+
+                repr                          = self._eval_with_pooling(inputs, dataset_name, padding_masks=padding_masks, encoding_window=encoding_window)
+
+                representations.append(repr)
+            
+        self.encoder.train()
+        self.projection_layers[dataset_name].train()
+
+        representations = torch.cat(representations, dim=0)
+
+        return representations
+    
+    def _eval_with_pooling(self, x, dataset_name, padding_masks=None, encoding_window=None):
+       
+        if self.encoder_layer == 'TFC':
+            if dataset_name == 'univariate':
+                x = self.univariate_revin_layer(x, 'norm')
+            projection                  = self.projection_layers[dataset_name](x, encode=True)
+            projection_f                = fft.fft(projection).abs()
+            out                         = self.encoder(projection, projection_f, padding_masks=padding_masks, encode=True)
+        else:
+            raise NotImplementedError(f'Encoder layer {self.encoder_layer} is not implemented.')
+
+        # TODO: Implement slicing and encoding_window # out = self.encoder(x.to(self.device, non_blocking=True), mask)
+        # if encoding_window == 'full_series':
+        #     pass
+        # elif isinstance(encoding_window, int):
+        #     pass
+        # elif encoding_window == 'multiscale':
+        #     pass
+        # else:
+        #     pass
+            
+        return out.cpu()
+
     
     def save(self, fn):
         ''' Save the model to a file.
@@ -435,7 +464,6 @@ class TSFM:
             torch.save(projection_layer.state_dict(), fn + "_projection_layer_{}.pkl".format(dataset_name))        
         torch.save(self.encoder.state_dict(), fn + "_encoder.pkl")
 
-    
     
     def load(self, fn):
         ''' Load the model from a file.
