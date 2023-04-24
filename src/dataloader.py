@@ -2,7 +2,8 @@ import torch
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
-from .dataset import collate_unsuperv, collate_superv
+
+from .dataset import collate_unsuperv, collate_superv, TSDataset
 
     
 class TSDataLoader:
@@ -16,7 +17,7 @@ class TSDataLoader:
 
             self.data_loaders = {}
             for name, ds in datasets.items():
-                if name == 'univariate':
+                if name == 'univariate' or type(ds) == TSDataset:
                     self.data_loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True)
                 else:
                     self.data_loaders[name] = DataLoader(ds, batch_size=batch_size, shuffle=shuffle, drop_last=True, collate_fn=lambda x: collate_unsuperv(x, max_len=max_len, mask_inputs=mask_inputs, pad_inputs=pad_inputs))

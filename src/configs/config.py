@@ -41,6 +41,7 @@ class Config(object):
                 transformer_normalization_layer='LayerNorm', # 'BatchNorm'
                 freeze=False,
                 model_configs={},
+                **kwargs
                 ):
         # model configs
         self.input_channels = input_channels

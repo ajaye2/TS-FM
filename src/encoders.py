@@ -71,14 +71,13 @@ class TFC(nn.Module):
         Returns:
             Tuple containing h_time, z_time, h_freq, and z_freq tensors.
         """
+
         x = self.transformer_encoder_t(x_in_t, padding_masks)
         h_time = self.adaptive_pool_t(x)
-
         z_time = self.projector_t(h_time)
-
+ 
         f = self.transformer_encoder_f(x_in_f, padding_masks)
         h_freq = self.adaptive_pool_f(f)
-
         z_freq = self.projector_f(h_freq)
 
         return h_time, z_time, h_freq, z_freq

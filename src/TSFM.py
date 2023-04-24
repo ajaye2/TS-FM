@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.utils.data import TensorDataset, DataLoader
 from .dataloader import TSDataLoader
 from .dataset import TSDataset, ImputationDataset
-from .projection_layers import LSTMMaskedAutoencoderProjection, MLPMaskedAutoencoderProjection
+from .projection_layers import LSTMMaskedAutoencoderProjection, MLPMaskedAutoencoderProjection, Unsqueeze
 import numpy as np
 import math
 from .RevIN import RevIN
@@ -34,9 +34,6 @@ class TSFM:
         projection_layer_dims=64,
         depth=10,
         device='cuda',
-        lr=0.001,
-        batch_size=16,
-        log=False,
         dtype=torch.float32,
         max_seq_length=None,
         encoder_config=None,
@@ -61,12 +58,9 @@ class TSFM:
 
         """Initialize the model parameters"""
         self.device = device
-        self.lr = lr
-        self.batch_size = batch_size
         self.max_seq_length = max_seq_length
         self.projection_layer_dims = projection_layer_dims
         self.encoder_layer_dims = encoder_config.encoder_layer_dims
-        self.log = log
         self.dtype = dtype
         self.encoder_layer = encoder_layer
         self.projection_layer_encoder = projection_layer_encoder
@@ -79,6 +73,7 @@ class TSFM:
         self.configs = {}
         self.use_revin = use_revin
         
+        #TODO: Add projection layer configs for initialization of each dataset
         """Initialize the projection layers"""
         for dataset_name, data_shape in input_data_shapes_dict.items():
             assert len(data_shape) == 2
@@ -94,15 +89,20 @@ class TSFM:
         self.encoder.update_parameters(self._encoder)
 
         """Initialize the univariate forcaster"""
+        embed_dim = encoder_config.encoder_layer_dims
+        if encoder_layer == 'TFC':
+            embed_dim = encoder_config.encoder_layer_dims * 2
         self._univariate_forcaster = nn.Sequential(
-            nn.Linear(encoder_config.encoder_layer_dims, univariate_forcast_hidden_dim),
+            nn.Linear(embed_dim, univariate_forcast_hidden_dim),
             nn.ReLU(),
-            nn.Linear(univariate_forcast_hidden_dim, 1)
+            # nn.Linear(univariate_forcast_hidden_dim, max_seq_length),
+            # Unsqueeze(dim=-1),
+            nn.Linear(univariate_forcast_hidden_dim, max_seq_length)
         ).to(self.device)
         self._univariate_forcaster = torch.optim.swa_utils.AveragedModel(self._univariate_forcaster).to(self.device)
         self._univariate_forcaster.update_parameters(self._univariate_forcaster)
 
-        self.univariate_revin_layer = RevIN(1)
+        self.univariate_revin_layer = RevIN(1).to(self.device)
 
         """Initialize the criterion for univariate forcasting"""
         if univariate_criterion == 'mse':
@@ -112,12 +112,12 @@ class TSFM:
 
     
     #TODO: Implement logging of loss in database
-    def fit(self, train_data_dict, labels=None, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None,  warmup_batch_size=512, **kwargs):
+    def fit(self, train_data_dict, labels=None, lr=1e-2, n_epochs=None, batch_size=512, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None,  warmup_batch_size=512, **kwargs):
 
         """Get the total number of data points"""
         total_number_of_data_points = 0
         for dataset_name, dataset in train_data_dict.items():
-            if dataset_name == 'univariate':
+            if type(dataset) == dict:
                 total_number_of_data_points += dataset['data'].shape[0]
                 total_number_of_data_points += dataset['labels'].shape[0]
             else:
@@ -134,8 +134,8 @@ class TSFM:
             self._projection_layers['univariate'].use_revin = False
 
         """Initialize the optimizer and the data loader"""
-        train_loader    = TSDataLoader(datasets, batch_size=self.batch_size, shuffle=shuffle,max_len=self.max_seq_length)
-        optimizer       = torch.optim.AdamW(optimizer_list, lr=self.lr)
+        train_loader    = TSDataLoader(datasets, batch_size=batch_size, shuffle=shuffle, max_len=self.max_seq_length)
+        optimizer       = torch.optim.AdamW(optimizer_list, lr=lr)
         
         """Set the number of iterations"""
         if n_iters is None and n_epochs is None:
@@ -189,6 +189,10 @@ class TSFM:
         optimizer_list = [{ "params": self._encoder.parameters()}]
 
         for dataset_name, train_data in train_data_dict.items():
+            if type(train_data) == dict:
+                train_data, labels = train_data['data'], train_data['labels']
+            else:
+                labels = None
             assert train_data.ndim == 3
                     
             """Remove the nan values"""
@@ -207,24 +211,26 @@ class TSFM:
                     batch_size = train_data.shape[0] // 20
 
                 warmup_config = warmup_config_kwargs[dataset_name]
-                dataset = warmup_config['data_set_type'](train_data,shuffle=shuffle, **kwargs)
+                dataset = warmup_config['data_set_type'](train_data, labels=labels, shuffle=shuffle, **kwargs)
                 n_epochs = warmup_epochs if 'n_epochs' not in warmup_config else warmup_config['n_epochs']
                 batch_s  = batch_size if 'batch_size' not in warmup_config else warmup_config['batch_size']
                 pl_kwargs = warmup_config['kwargs'] if 'kwargs' in warmup_config else {}
-                self._projection_layers[dataset_name].warmup(dataset, n_epochs=n_epochs, batch_size=batch_s, learning_rate=self.lr, 
+                self._projection_layers[dataset_name].warmup(dataset, n_epochs=n_epochs, batch_size=batch_s, learning_rate=lr, 
                                                              log=log, data_set_type=warmup_config['data_set_type'], 
                                                              collate_fn='unsuperv', max_len=self.max_seq_length, 
+                                                             dataset_name=dataset_name,
                                                              **pl_kwargs
                                                              ) 
 
             """Initialize datasets"""
             encoder_dataset_type = TSDataset
             if self.encoder_layer == 'TFC':
-                config     = configs[dataset_name]
                 if configs is None or dataset_name not in configs:
                     if warmup_config_kwargs is None or dataset_name not in warmup_config_kwargs:
                         raise ValueError('Either configs or config_kwargs must be specified.')
                     config = Configs(**warmup_config_kwargs[dataset_name])
+                else:
+                    config     = configs[dataset_name]
 
                 self.configs[dataset_name] = config
                 datasets[dataset_name]     = TSDataset(train_data, max_len=self.max_seq_length)
@@ -273,7 +279,7 @@ class TSFM:
         label_time_feat                     = data_inputs[5]
         
         """Get the projections"""
-        x_data                              = self._projection_layers[dataset_name](inputs)
+        x_data                              = self._projection_layers[dataset_name].encode(inputs)
         x_data_f                            = fft.fft(x_data).abs()
         aug1                                = DataTransform_TD(x_data, config) # TODO: Check if transformation is done on the time dimension or the feature dimension
         aug1_f                              = DataTransform_FD(x_data_f, config)
@@ -285,12 +291,15 @@ class TSFM:
         """Compute the univariate loss"""
         univariate_forcast_loss = 0
         if dataset_name == 'univariate':
- 
+            
+            # print(z_t.shape, z_f.shape, z_t_aug.shape, z_f_aug.shape)
             embeddings       = torch.cat((z_t, z_f), dim=1)
             embeddings_aug   = torch.cat((z_t_aug, z_f_aug), dim=1)
 
-            uni_forcast      = self._univariate_forcaster(embeddings)
-            uni_forcast_aug  = self._univariate_forcaster(embeddings_aug)
+            uni_forcast      = self._univariate_forcaster(embeddings).unsqueeze(-1)
+            uni_forcast_aug  = self._univariate_forcaster(embeddings_aug).unsqueeze(-1)
+
+            # print(uni_forcast.shape)
 
             uni_forcast      = self.univariate_revin_layer(uni_forcast, 'denorm')
             uni_forcast_aug  = self.univariate_revin_layer(uni_forcast_aug, 'denorm')
@@ -358,10 +367,18 @@ class TSFM:
         
         return encoder
 
-    def get_projection_layer(self, data_shape, projection_layer_encoder, use_revin=True):
+    def get_projection_layer(self, data_shape, projection_layer_encoder, use_revin=True, loss_type='mae', use_gru=False, **kwargs):
         ts_length  = data_shape[0]
         input_dims = data_shape[1]
-        proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](input_dims, self.projection_layer_dims, self.projection_layer_dims, device=self.device, use_revin=use_revin).to(self.device)
+        proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](input_dims=input_dims, 
+                                                                           hidden_dims=self.projection_layer_dims, 
+                                                                           output_dims=self.projection_layer_dims, 
+                                                                           device=self.device, 
+                                                                           use_revin=use_revin,
+                                                                           loss_type=loss_type,
+                                                                           use_gru=use_gru,
+                                                                           **kwargs
+                                                                           ).to(self.device)
         return proj_layer
     
     def _eval_with_pooling(self, x, encoding_window=None):
@@ -379,7 +396,7 @@ class TSFM:
         # return out.cpu()
 
     
-    def encode(self, data, batch_size=None, encoding_window=None):
+    def encode(self, data, batch_size, encoding_window=None):
         ''' Compute representations using the model.
         
         Args:
@@ -389,8 +406,7 @@ class TSFM:
         '''
         assert self.encoder is not None, 'please train or load a encoder first'
         assert data.ndim == 3
-        if batch_size is None:
-            batch_size = self.batch_size
+ 
         n_samples, ts_l, _ = data.shape
 
         org_training = self.encoder.training

@@ -231,7 +231,6 @@ class TSTransformerEncoder(nn.Module):
         Returns:
             output: (batch_size, seq_length, feat_dim)
         """
-
         # permute because pytorch convention for transformers is [seq_length, batch_size, feat_dim]. padding_masks [batch_size, feat_dim]
         inp = X.permute(1, 0, 2)
         inp = self.project_inp(inp) * math.sqrt(

@@ -42,7 +42,7 @@ class BaseProjectionLayer(nn.Module):
     def warmup(self, dataset: Union[TSDataset, ImputationDataset], max_len: int, 
                      n_epochs: int = 10, batch_size: int = 64, learning_rate: float = 0.001, 
                      log: bool = False, data_set_type: Type = TSDataset, collate_fn: str = 'unsuperv', 
-                     scheduler_step_size: int = 30, scheduler_gamma: float=0.1, verbose: bool = False, **kwargs) -> None:
+                     scheduler_step_size: int = 30, scheduler_gamma: float=0.1, verbose: bool = False, dataset_name="", **kwargs) -> None:
         """
         Warmup function to train the autoencoder.
 
@@ -70,7 +70,7 @@ class BaseProjectionLayer(nn.Module):
             data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         if log:
-            print(f'Warming up with {len(data_loader)} batches of size {batch_size}')
+            print(f'Warming up with {len(data_loader)} batches of size {batch_size}. Dataset name {dataset_name}.')
 
         # Define the loss function and optimizer
         optimizer = optim.Adam(self.parameters(), lr=learning_rate)
@@ -205,7 +205,6 @@ class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):
         self.use_gru = use_gru
         if use_revin:
             self.revin_layer = RevIN(input_dims).to(device)
-
 
         if use_gru:
             self.encoder = nn.GRU(input_size=input_dims, hidden_size=output_dims, batch_first=True).to(device)
@@ -450,6 +449,16 @@ class TransformerEncoderProjectionLayer(BaseProjectionLayer):
 
 
 
+import torch
+import torch.nn as nn
+
+class Unsqueeze(nn.Module):
+    def __init__(self, dim):
+        super(Unsqueeze, self).__init__()
+        self.dim = dim
+
+    def forward(self, x):
+        return x.unsqueeze(self.dim)
 
 
 

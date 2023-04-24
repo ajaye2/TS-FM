@@ -85,7 +85,7 @@ def add_frequency(x, pertub_ratio=0.0, config=None):
 
     mask = mask.to(x.device)
     max_amplitude = x.max()
-    random_am = torch.rand(mask.shape)*(max_amplitude*0.1)
+    random_am = torch.rand(mask.shape).to(x.device)*(max_amplitude*0.1)
     pertub_matrix = mask*random_am
     return x+pertub_matrix
 
