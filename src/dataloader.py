@@ -29,10 +29,15 @@ class TSDataLoader:
         self.dataset_names          = list(datasets.keys())
         self.current_dataset_index  = 0
 
+        self.exhausted_datasets     = 0
+
     def __iter__(self):
         return self
 
     def __next__(self):
+        if self.exhausted_datasets == len(self.dataset_names):
+            raise StopIteration
+
         name = self.dataset_names[self.current_dataset_index]
         iterator = self.dataset_iterators[name]
 
@@ -44,10 +49,22 @@ class TSDataLoader:
             self.dataset_iterators[name] = iterator
             data = next(iterator)
 
+            # Increment the exhausted_datasets counter
+            self.exhausted_datasets += 1
+        else:
+            # Reset the exhausted_datasets counter if we get data without StopIteration
+            self.exhausted_datasets = 0
+
         # Update the current dataset index to cycle through the datasets
         self.current_dataset_index = (self.current_dataset_index + 1) % len(self.dataset_names)
 
         return {name: data}
+
+
+
+
+
+
 
 
 

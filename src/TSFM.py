@@ -176,7 +176,7 @@ class TSFM:
             for dataset_name, cum_loss in cum_loss_dict.items():
                 cum_loss /= n_epoch_iters
                 loss_dict[dataset_name].append(cum_loss)
-                if verbose: print(f"Epoch #{self.n_epochs}: loss={cum_loss}")
+                if verbose: print(f"Epoch #{self.n_epochs}: loss={cum_loss} for {dataset_name}")
 
             """Update the number of epochs"""
             self.n_epochs += 1
