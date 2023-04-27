@@ -8,6 +8,7 @@ __pycache__/
 
 KEYS.py
 src/KEYS.py
+models/
 
 # Distribution / packaging
 .Python

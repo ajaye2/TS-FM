@@ -16,6 +16,8 @@ from .configs import Configs
 from .TFC.augmentations import DataTransform_FD, DataTransform_TD
 from .TFC.loss import NTXentLoss_poly, NTXentLoss
 import torch.fft as fft
+import os
+from accelerate import Accelerator
 
 
 class TSFM:
@@ -29,6 +31,7 @@ class TSFM:
     def __init__(
         self,
         input_data_shapes_dict,
+        model_name,
         projection_layer_encoder='lstm',
         encoder_layer='TFC',
         projection_layer_dims=64,
@@ -72,7 +75,13 @@ class TSFM:
         self._projection_layers = {}
         self.configs = {}
         self.use_revin = use_revin
-        
+        self.loss_dict_by_steps = {}
+        self.model_name = model_name
+        self.n_iters_dict = {}
+
+        #TODO: Add optionality to use accelerator
+        self.accelerator = Accelerator()
+        self.device      = self.accelerator.device
         #TODO: Add projection layer configs for initialization of each dataset
         """Initialize the projection layers"""
         for dataset_name, data_shape in input_data_shapes_dict.items():
@@ -83,10 +92,13 @@ class TSFM:
             self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
             self.configs[dataset_name] = {}
 
+            self._projection_layers[dataset_name], self.projection_layers[dataset_name] = self.accelerator.prepare(self._projection_layers[dataset_name], self.projection_layers[dataset_name])
+
         """Initialize the encoder"""
         self._encoder = self.get_encoder_layer().to(self.device)  #Encoder(encoder_layer, encoder_layer_dims, depth).to(self.device)
         self.encoder = torch.optim.swa_utils.AveragedModel(self._encoder).to(self.device)
         self.encoder.update_parameters(self._encoder)
+        
 
         """Initialize the univariate forcaster"""
         embed_dim = encoder_config.encoder_layer_dims
@@ -99,8 +111,8 @@ class TSFM:
             # Unsqueeze(dim=-1),
             nn.Linear(univariate_forcast_hidden_dim, max_seq_length)
         ).to(self.device)
-        self._univariate_forcaster = torch.optim.swa_utils.AveragedModel(self._univariate_forcaster).to(self.device)
-        self._univariate_forcaster.update_parameters(self._univariate_forcaster)
+        self.univariate_forcaster = torch.optim.swa_utils.AveragedModel(self._univariate_forcaster).to(self.device)
+        self.univariate_forcaster.update_parameters(self._univariate_forcaster)
 
         self.univariate_revin_layer = RevIN(1).to(self.device)
 
@@ -110,9 +122,24 @@ class TSFM:
         elif univariate_criterion == 'mae':
             self._univariate_forcast_criterion = nn.L1Loss()
 
-    
+        (   
+            self._encoder, 
+            self.encoder, 
+            self._univariate_forcaster, 
+            self.univariate_forcaster, 
+            self._univariate_forcast_criterion, 
+            self.univariate_revin_layer
+        ) = self.accelerator.prepare(
+            self._encoder, 
+            self.encoder, 
+            self._univariate_forcaster, 
+            self.univariate_forcaster, 
+            self._univariate_forcast_criterion, 
+            self.univariate_revin_layer
+        )
+
     #TODO: Implement logging of loss in database
-    def fit(self, train_data_dict, labels=None, lr=1e-2, n_epochs=None, batch_size=512, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None,  warmup_batch_size=512, **kwargs):
+    def fit(self, train_data_dict, labels=None, lr=1e-2, n_epochs=None, batch_size=512, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None,  warmup_batch_size=512, print_every_iter=10000, **kwargs):
 
         """Get the total number of data points"""
         total_number_of_data_points = 0
@@ -138,13 +165,17 @@ class TSFM:
         """Initialize the optimizer and the data loader"""
         train_loader    = TSDataLoader(datasets, batch_size=batch_size, shuffle=shuffle, max_len=self.max_seq_length)
         optimizer       = torch.optim.AdamW(optimizer_list, lr=lr)
+
+        optimizer, train_loader = self.accelerator.prepare(optimizer, train_loader)
         
         """Set the number of iterations"""
         if n_iters is None and n_epochs is None:
             n_iters = 200 if total_number_of_data_points <= 100000 else 600  # default param for n_iters
         
         """Initialize the loss dict"""
-        loss_dict = {name: [] for name in train_data_dict.keys()}
+        loss_dict = {name: [] for name in train_data_dict.keys() }
+        self.loss_dict_by_steps = {name: [] for name in train_data_dict.keys() if name not in self.loss_dict_by_steps.keys()}
+        self.n_iters_dict = {name: 0 for name in train_data_dict.keys() if name not in self.n_iters_dict.keys()}
 
         """Start training"""
         while True:
@@ -169,8 +200,25 @@ class TSFM:
                 for dataset_name, data in batch.items():
                     loss = self.train_step(data, dataset_name, optimizer, encoder_dataset_type)
                     cum_loss_dict[dataset_name] += loss.item()
+                    self.loss_dict_by_steps[dataset_name].append(loss.item())
+
+                    if self.n_iters_dict[dataset_name] % print_every_iter == 0:
+                        print(f'Epoch #{self.n_epochs}, Iter #{self.n_iters_dict[dataset_name]}: loss={loss.item()} for {dataset_name}')
+                
+
+                    self.n_iters_dict[dataset_name] += 1
+
+                avg_n_iters = int( np.mean(list(self.n_iters_dict.values())) )
+                
+                if avg_n_iters % print_every_iter == 0:
+                    model_path = f'./models/{self.model_name}/iter_{avg_n_iters}/'
+                    if not os.path.exists(model_path):
+                        os.makedirs(model_path)
+                    self.save(model_path)
+                    
                 n_epoch_iters += 1
                 self.n_iters  += 1
+                
                         
             """Compute the average loss"""
             for dataset_name, cum_loss in cum_loss_dict.items():
@@ -221,7 +269,7 @@ class TSFM:
                 self._projection_layers[dataset_name].warmup(dataset, n_epochs=n_epochs, batch_size=batch_s, learning_rate=pl_lr, 
                                                              log=log, data_set_type=warmup_config['data_set_type'], 
                                                              collate_fn='unsuperv', max_len=self.max_seq_length, 
-                                                             dataset_name=dataset_name,
+                                                             dataset_name=dataset_name, accelerator=self.accelerator,
                                                              **pl_kwargs
                                                              ) 
 
@@ -260,7 +308,8 @@ class TSFM:
             loss = self._train_step_TFC(data, dataset_name, data_set_type)
 
         """Backpropagation"""
-        loss.backward()
+        # loss.backward()
+        self.accelerator.backward(loss)
         optimizer.step()
 
         """Update the parameters"""
@@ -293,21 +342,21 @@ class TSFM:
 
         """Compute the univariate loss"""
         univariate_forcast_loss = 0
-        if dataset_name == 'univariate':
+        # if dataset_name == 'univariate':
             
-            # print(z_t.shape, z_f.shape, z_t_aug.shape, z_f_aug.shape)
-            embeddings       = torch.cat((z_t, z_f), dim=1)
-            embeddings_aug   = torch.cat((z_t_aug, z_f_aug), dim=1)
+        #     # print(z_t.shape, z_f.shape, z_t_aug.shape, z_f_aug.shape)
+        #     embeddings       = torch.cat((z_t, z_f), dim=1)
+        #     embeddings_aug   = torch.cat((z_t_aug, z_f_aug), dim=1)
 
-            uni_forcast      = self._univariate_forcaster(embeddings).unsqueeze(-1)
-            uni_forcast_aug  = self._univariate_forcaster(embeddings_aug).unsqueeze(-1)
+        #     uni_forcast      = self._univariate_forcaster(embeddings).unsqueeze(-1)
+        #     uni_forcast_aug  = self._univariate_forcaster(embeddings_aug).unsqueeze(-1)
 
-            # print(uni_forcast.shape)
+        #     # print(uni_forcast.shape)
 
-            uni_forcast      = self.univariate_revin_layer(uni_forcast, 'denorm')
-            uni_forcast_aug  = self.univariate_revin_layer(uni_forcast_aug, 'denorm')
+        #     uni_forcast      = self.univariate_revin_layer(uni_forcast, 'denorm')
+        #     uni_forcast_aug  = self.univariate_revin_layer(uni_forcast_aug, 'denorm')
 
-            univariate_forcast_loss = self._univariate_forcast_criterion(uni_forcast, targets) + self._univariate_forcast_criterion(uni_forcast_aug, targets)
+        #     univariate_forcast_loss = self._univariate_forcast_criterion(uni_forcast, targets) + self._univariate_forcast_criterion(uni_forcast_aug, targets)
 
         """Compute the context contrastive loss - NTXentLoss: normalized temperature-scaled cross entropy loss. From SimCLR"""
         nt_xent_criterion                   = NTXentLoss_poly(self.device, config.batch_size, config.Context_Cont.temperature,

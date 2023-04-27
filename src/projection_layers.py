@@ -42,7 +42,7 @@ class BaseProjectionLayer(nn.Module):
     def warmup(self, dataset: Union[TSDataset, ImputationDataset], max_len: int, 
                      n_epochs: int = 10, batch_size: int = 64, learning_rate: float = 0.001, 
                      log: bool = False, data_set_type: Type = TSDataset, collate_fn: str = 'unsuperv', 
-                     scheduler_step_size: int = 30, scheduler_gamma: float=0.1, verbose: bool = False, dataset_name="", **kwargs) -> None:
+                     scheduler_step_size: int = 30, scheduler_gamma: float=0.1, verbose: bool = False, dataset_name="", accelerator = None, **kwargs) -> None:
         """
         Warmup function to train the autoencoder.
 
@@ -76,6 +76,9 @@ class BaseProjectionLayer(nn.Module):
         # Define the loss function and optimizer
         optimizer = optim.Adam(self.parameters(), lr=learning_rate)
 
+        if accelerator is not None:
+            data_loader, optimizer = accelerator.prepare(data_loader, optimizer)
+
         # Add the learning rate scheduler
         # scheduler = StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
         # scheduler = ReduceLROnPlateau(optimizer, 'min', verbose=verbose)
@@ -100,7 +103,10 @@ class BaseProjectionLayer(nn.Module):
                 loss = self.compute_loss(targets, target_masks, padding_masks, reconstructed)
 
                 # Backward pass
-                loss.backward()
+                if accelerator is None:
+                    loss.backward()
+                else:
+                    accelerator.backward(loss)
 
                 # Update the weights
                 optimizer.step()

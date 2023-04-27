@@ -12,6 +12,7 @@ dependencies:
   - pip:
     - torchmetrics
     - transformers
+    - accelerate
 
 
 # conda env create -f baseline_requirements.yml
