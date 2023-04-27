@@ -1,0 +1,27 @@
+Assuming you are using Ubuntu 18.04, follow these steps:
+
+Add the NVIDIA CUDA repository:
+bash
+Copy code
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1804/x86_64/cuda-ubuntu1804.pin
+sudo mv cuda-ubuntu1804.pin /etc/apt/preferences.d/cuda-repository-pin-600
+wget http://developer.download.nvidia.com/compute/cuda/11.4.1/local_installers/cuda-repo-ubuntu1804-11-4-local_11.4.1-470.57.02-1_amd64.deb
+sudo dpkg -i cuda-repo-ubuntu1804-11-4-local_11.4.1-470.57.02-1_amd64.deb
+sudo apt-key add /var/cuda-repo-ubuntu1804-11-4-local/7fa2af80.pub
+Update the package manager:
+bash
+Copy code
+sudo apt-get update
+Install the 'cuda' package:
+bash
+Copy code
+sudo apt-get -y install cuda
+If you are using a different version of Ubuntu or a different Linux distribution, you may need to adjust the repository and package URLs accordingly. You can find the appropriate URLs and instructions for your specific distribution and version on the NVIDIA CUDA Toolkit download page: https://developer.nvidia.com/cuda-downloads
+
+After installing CUDA, remember to add the CUDA binaries and libraries to your system's PATH and LD_LIBRARY_PATH environment variables. For example, if you installed CUDA 11.4, add the following lines to your ~/.bashrc file:
+
+bash
+Copy code
+export PATH=/usr/local/cuda-11.4/bin:$PATH
+export LD_LIBRARY_PATH=/usr/local/cuda-11.4/lib64:$LD_LIBRARY_PATH
+Then, run source ~/.bashrc to reload your shell environment.

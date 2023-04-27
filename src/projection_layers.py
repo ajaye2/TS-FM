@@ -12,7 +12,8 @@ from .dataset import TSDataset, ImputationDataset, collate_unsuperv, collate_sup
 from .mvts_transformer import *
 from .mvts_transformer.ts_transformer import _get_activation_fn
 from torch.optim.lr_scheduler import StepLR , ReduceLROnPlateau
-
+from src.Time_Series_Library.models import Informer, Nonstationary_Transformer, ETSformer
+from src.configs import Configs, ModelConfig
 
 class BaseProjectionLayer(nn.Module):
     """
@@ -97,7 +98,7 @@ class BaseProjectionLayer(nn.Module):
                 optimizer.zero_grad()
 
                 # Forward pass
-                reconstructed = self(inputs, padding_masks)
+                reconstructed = self(x=inputs, mask=padding_masks)
 
                 # Calculate the loss
                 loss = self.compute_loss(targets, target_masks, padding_masks, reconstructed)
@@ -187,6 +188,65 @@ class BaseProjectionLayer(nn.Module):
             label_time_feat = label_time_feat.to(self.device)
         
         return inputs, targets, target_masks, padding_masks, data_time_feat, label_time_feat
+
+class ETSformerAutoencoderProjection(BaseProjectionLayer):
+    def __init__(self, model_config: ModelConfig, device: str, use_revin: bool = True, dtype: torch.dtype = torch.float32, loss_type: str = 'mae', **kwargs):
+        """
+        Initialize the ETSformer-based autoencoder projection layer.
+
+        Args:
+            input_dims: Number of input dimensions.
+            hidden_dims: Number of hidden dimensions.
+            output_dims: Number of output dimensions.
+            device: The device to use for computation.
+            use_revin: Whether to use the RevIN normalization layer.
+            dtype: The data type to use for tensors.
+            loss_type: The type of loss function to use.
+            kwargs: Additional arguments for the base class.
+        """
+        super().__init__("ets_former_encoder", loss_type, device=device, **kwargs)
+
+        self.dtype = dtype
+        self.device = device
+        self.use_revin = use_revin
+
+        assert model_config.task_name in ['long_term_forecast', 'short_term_forecast', 'imputation']
+
+        self.ets_former = ETSformer(model_config).to(device)
+        
+        if use_revin:
+            self.revin_layer = RevIN(model_config.enc_in).to(device)
+
+    def forward(self, 
+                x: torch.Tensor, 
+                x_dec: torch.Tensor = None, 
+                mask: Optional[torch.Tensor] = None, 
+                encode: bool= False) -> torch.Tensor:
+        """
+        Implement the full forward pass for masked autoencoder (including decoder).
+
+        Args:
+            x_enc: The input tensor.
+            mask: The mask to apply on the input tensor.
+
+        Returns:
+            The reconstructed tensor.
+        """
+        x_enc = x
+        if self.use_revin:
+            x_enc = self.revin_layer(x_enc, 'norm')
+            if x_dec is not None:
+                x_dec = self.revin_layer._normalize(x_dec)
+
+        x_decoded = self.ets_former(x_enc, None, x_dec, None)
+        if encode:
+            return x_decoded
+
+        if self.use_revin:
+            x_decoded = self.revin_layer(x_decoded, 'denorm')
+
+        return x_decoded
+
 
     
 class LSTMMaskedAutoencoderProjection(BaseProjectionLayer):

@@ -13,8 +13,16 @@ dependencies:
     - torchmetrics
     - transformers
     - accelerate
+    - matplotlib
+    - torchinfo
+    - einops
+    - reformer_pytorch
+    - sympy
 
 
 # conda env create -f baseline_requirements.yml
 # conda activate baseline
+# conda deactivate 
+
+
 # conda remove -n baseline --all
