@@ -20,6 +20,7 @@ dependencies:
     - reformer_pytorch
     - sympy
     - PyYAML
+    - pytorch==1.13.1
 
 
 # conda env create -f baseline_requirements.yml
@@ -28,3 +29,4 @@ dependencies:
 
 
 # conda remove -n baseline --all
+# unset LD_LIBRARY_PATH - in terminal when getting cudnn error

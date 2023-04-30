@@ -12,7 +12,7 @@ from .dataset import TSDataset, ImputationDataset, collate_unsuperv, collate_sup
 from .mvts_transformer import *
 from .mvts_transformer.ts_transformer import _get_activation_fn
 from torch.optim.lr_scheduler import StepLR , ReduceLROnPlateau
-from src.Time_Series_Library.models import Informer, Nonstationary_Transformer, ETSformer
+from src.Time_Series_Library.models import Informer, Nonstationary_Transformer, ETSformer, DLinear
 from src.configs import Configs, ModelConfig
 
 class BaseProjectionLayer(nn.Module):
@@ -189,8 +189,8 @@ class BaseProjectionLayer(nn.Module):
         
         return inputs, targets, target_masks, padding_masks, data_time_feat, label_time_feat
 
-class ETSformerAutoencoderProjection(BaseProjectionLayer):
-    def __init__(self, model_config: ModelConfig, device: str, use_revin: bool = True, dtype: torch.dtype = torch.float32, loss_type: str = 'mae', **kwargs):
+class TransformerAutoencoderProjection(BaseProjectionLayer):
+    def __init__(self, model_config: ModelConfig, device: str, type_model: str, use_revin: bool = True, dtype: torch.dtype = torch.float32, loss_type: str = 'mae', **kwargs):
         """
         Initialize the ETSformer-based autoencoder projection layer.
 
@@ -204,15 +204,25 @@ class ETSformerAutoencoderProjection(BaseProjectionLayer):
             loss_type: The type of loss function to use.
             kwargs: Additional arguments for the base class.
         """
-        super().__init__("ets_former_encoder", loss_type, device=device, **kwargs)
+        super().__init__(type_model + "_former_encoder", loss_type, device=device, **kwargs)
 
         self.dtype = dtype
         self.device = device
         self.use_revin = use_revin
+        self.type_model = type_model
 
         assert model_config.task_name in ['long_term_forecast', 'short_term_forecast', 'imputation']
-
-        self.ets_former = ETSformer(model_config).to(device)
+        
+        if type_model == 'ets':
+            self.transformer = ETSformer(model_config).to(device)
+        elif type_model == 'non_stationary':
+            self.transformer = Nonstationary_Transformer(model_config).to(device)
+        elif type_model == 'dlinear':
+            self.transformer = DLinear(model_config, individual=model_config.individual).to(device)
+        else:
+            raise ValueError(f'Unknown type model: {type_model}')
+        
+        #TODO: Update position embedding to be learned 
         
         if use_revin:
             self.revin_layer = RevIN(model_config.enc_in).to(device)
@@ -238,7 +248,15 @@ class ETSformerAutoencoderProjection(BaseProjectionLayer):
             if x_dec is not None:
                 x_dec = self.revin_layer._normalize(x_dec)
 
-        x_decoded = self.ets_former(x_enc, None, x_dec, None)
+        if self.type_model == 'ets':
+            x_decoded = self.transformer(x_enc, None, x_dec, None)
+        elif self.type_model == 'non_stationary':
+            mask = torch.ones_like(x_enc) # Change later
+            x_decoded = self.transformer(x_enc, None, x_dec, None, mask)
+        elif self.type_model == 'dlinear':
+            x_decoded = self.transformer(x_enc, None, x_dec, None)
+
+        
         if encode:
             return x_decoded
 
@@ -433,86 +451,86 @@ class MLPMaskedAutoencoderProjection(BaseProjectionLayer):
         return enc_output
 
 
-class TransformerEncoderProjectionLayer(BaseProjectionLayer):
+# class TransformerEncoderProjectionLayer(BaseProjectionLayer):
 
-    # def __init__(self, feat_dim, max_len, d_model, n_heads, num_layers, dim_feedforward, dropout=0.1,
-    #              pos_encoding='fixed', activation='gelu', norm='BatchNorm', freeze=False):
-    def __init__(self, input_dims: int, hidden_dims: int, output_dims: int, device: str, n_heads:int,
-                  num_layers:int, max_len: int, use_revin: bool = True, dtype: torch.dtype = torch.float32, 
-                  loss_type: str = 'mae', dropout=0.1, pos_encoding='fixed', activation='gelu', norm='BatchNorm', freeze=False,
-                  **kwargs):
+#     # def __init__(self, feat_dim, max_len, d_model, n_heads, num_layers, dim_feedforward, dropout=0.1,
+#     #              pos_encoding='fixed', activation='gelu', norm='BatchNorm', freeze=False):
+#     def __init__(self, input_dims: int, hidden_dims: int, output_dims: int, device: str, n_heads:int,
+#                   num_layers:int, max_len: int, use_revin: bool = True, dtype: torch.dtype = torch.float32, 
+#                   loss_type: str = 'mae', dropout=0.1, pos_encoding='fixed', activation='gelu', norm='BatchNorm', freeze=False,
+#                   **kwargs):
    
-        super().__init__("transformer_encoder", loss_type, device=device, **kwargs)
+#         super().__init__("transformer_encoder", loss_type, device=device, **kwargs)
 
-        self.max_len = max_len
-        self.d_model = output_dims
-        self.n_heads = n_heads
-        self.use_revin = use_revin
-        self.dtype = dtype
+#         self.max_len = max_len
+#         self.d_model = output_dims
+#         self.n_heads = n_heads
+#         self.use_revin = use_revin
+#         self.dtype = dtype
 
-        if use_revin:
-            self.revin_layer = RevIN(input_dims).to(device)
-
-
-        self.project_inp = nn.Linear(input_dims, output_dims)
-        self.pos_enc = get_pos_encoder(pos_encoding)(output_dims, dropout=dropout*(1.0 - freeze), max_len=max_len)
-
-        if norm == 'LayerNorm':
-            encoder_layer = TransformerEncoderLayer(output_dims, self.n_heads, hidden_dims, dropout*(1.0 - freeze), activation=activation)
-        else:
-            encoder_layer = TransformerBatchNormEncoderLayer(output_dims, self.n_heads, hidden_dims, dropout*(1.0 - freeze), activation=activation)
-
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
-
-        self.output_layer = nn.Linear(output_dims, input_dims)
-
-        self.act = _get_activation_fn(activation)
-
-        self.dropout1 = nn.Dropout(dropout)
-
-        self.feat_dim = input_dims
-
-    def forward(self, X, padding_masks, encode: bool= False):
-        """
-        Args:
-            X: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
-            padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
-        Returns:
-            output: (batch_size, seq_length, feat_dim)
-        """
-
-        output = self.encode(X, padding_masks)
-        output = self.dropout1(output)
-        # Most probably defining a Linear(d_model,feat_dim) vectorizes the operation over (seq_length, batch_size).
-        output = self.output_layer(output)  # (batch_size, seq_length, feat_dim)
-
-        if self.use_revin:
-            output = self.revin_layer(output, 'denorm')
-
-        return output
-
-    def encode(self, X , padding_masks, type_of_pooling: str = '',):
-
-        if self.use_revin:
-            X = self.revin_layer(X, 'norm')
-
-        # permute because pytorch convention for transformers is [seq_length, batch_size, feat_dim]. padding_masks [batch_size, feat_dim]
-        inp = X.permute(1, 0, 2)
-        inp = self.project_inp(inp) * math.sqrt(
-            self.d_model)  # [seq_length, batch_size, d_model] project input vectors to d_model dimensional space
-        inp = self.pos_enc(inp)  # add positional encoding
-        # NOTE: logic for padding masks is reversed to comply with definition in MultiHeadAttention, TransformerEncoderLayer
-        output = self.transformer_encoder(inp, src_key_padding_mask=~padding_masks)  # (seq_length, batch_size, d_model)
-        output = self.act(output)  # the output transformer encoder/decoder embeddings don't include non-linearity
-        output = output.permute(1, 0, 2)  # (batch_size, seq_length, d_model)
-
-        if type_of_pooling == 'last':
-            output = output[:, -1, :]
-        elif type_of_pooling == 'mean':
-            output = torch.mean(output, dim=1)
+#         if use_revin:
+#             self.revin_layer = RevIN(input_dims).to(device)
 
 
-        return output
+#         self.project_inp = nn.Linear(input_dims, output_dims)
+#         self.pos_enc = get_pos_encoder(pos_encoding)(output_dims, dropout=dropout*(1.0 - freeze), max_len=max_len)
+
+#         if norm == 'LayerNorm':
+#             encoder_layer = TransformerEncoderLayer(output_dims, self.n_heads, hidden_dims, dropout*(1.0 - freeze), activation=activation)
+#         else:
+#             encoder_layer = TransformerBatchNormEncoderLayer(output_dims, self.n_heads, hidden_dims, dropout*(1.0 - freeze), activation=activation)
+
+#         self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers)
+
+#         self.output_layer = nn.Linear(output_dims, input_dims)
+
+#         self.act = _get_activation_fn(activation)
+
+#         self.dropout1 = nn.Dropout(dropout)
+
+#         self.feat_dim = input_dims
+
+#     def forward(self, X, padding_masks, encode: bool= False):
+#         """
+#         Args:
+#             X: (batch_size, seq_length, feat_dim) torch tensor of masked features (input)
+#             padding_masks: (batch_size, seq_length) boolean tensor, 1 means keep vector at this position, 0 means padding
+#         Returns:
+#             output: (batch_size, seq_length, feat_dim)
+#         """
+
+#         output = self.encode(X, padding_masks)
+#         output = self.dropout1(output)
+#         # Most probably defining a Linear(d_model,feat_dim) vectorizes the operation over (seq_length, batch_size).
+#         output = self.output_layer(output)  # (batch_size, seq_length, feat_dim)
+
+#         if self.use_revin:
+#             output = self.revin_layer(output, 'denorm')
+
+#         return output
+
+#     def encode(self, X , padding_masks, type_of_pooling: str = '',):
+
+#         if self.use_revin:
+#             X = self.revin_layer(X, 'norm')
+
+#         # permute because pytorch convention for transformers is [seq_length, batch_size, feat_dim]. padding_masks [batch_size, feat_dim]
+#         inp = X.permute(1, 0, 2)
+#         inp = self.project_inp(inp) * math.sqrt(
+#             self.d_model)  # [seq_length, batch_size, d_model] project input vectors to d_model dimensional space
+#         inp = self.pos_enc(inp)  # add positional encoding
+#         # NOTE: logic for padding masks is reversed to comply with definition in MultiHeadAttention, TransformerEncoderLayer
+#         output = self.transformer_encoder(inp, src_key_padding_mask=~padding_masks)  # (seq_length, batch_size, d_model)
+#         output = self.act(output)  # the output transformer encoder/decoder embeddings don't include non-linearity
+#         output = output.permute(1, 0, 2)  # (batch_size, seq_length, d_model)
+
+#         if type_of_pooling == 'last':
+#             output = output[:, -1, :]
+#         elif type_of_pooling == 'mean':
+#             output = torch.mean(output, dim=1)
+
+
+#         return output
 
 
 
