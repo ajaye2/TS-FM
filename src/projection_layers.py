@@ -12,7 +12,7 @@ from .dataset import TSDataset, ImputationDataset, collate_unsuperv, collate_sup
 from .mvts_transformer import *
 from .mvts_transformer.ts_transformer import _get_activation_fn
 from torch.optim.lr_scheduler import StepLR , ReduceLROnPlateau
-from src.Time_Series_Library.models import Informer, Nonstationary_Transformer, ETSformer, DLinear
+from src.Time_Series_Library.models import Informer, Nonstationary_Transformer, ETSformer, DLinear, TimesNet
 from src.configs import Configs, ModelConfig
 
 class BaseProjectionLayer(nn.Module):
@@ -219,6 +219,8 @@ class TransformerAutoencoderProjection(BaseProjectionLayer):
             self.transformer = Nonstationary_Transformer(model_config).to(device)
         elif type_model == 'dlinear':
             self.transformer = DLinear(model_config, individual=model_config.individual).to(device)
+        elif type_model == 'times_net':
+            self.transformer = TimesNet(model_config).to(device)
         else:
             raise ValueError(f'Unknown type model: {type_model}')
         
@@ -250,11 +252,13 @@ class TransformerAutoencoderProjection(BaseProjectionLayer):
 
         if self.type_model == 'ets':
             x_decoded = self.transformer(x_enc, None, x_dec, None)
-        elif self.type_model == 'non_stationary':
+        elif self.type_model == 'non_stationary' or self.type_model == 'times_net':
             mask = torch.ones_like(x_enc) # Change later
+            x_dec = torch.zeros_like(x_enc) # Change later
             x_decoded = self.transformer(x_enc, None, x_dec, None, mask)
         elif self.type_model == 'dlinear':
             x_decoded = self.transformer(x_enc, None, x_dec, None)
+
 
         
         if encode:

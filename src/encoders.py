@@ -24,42 +24,44 @@ class TFC(nn.Module):
 
         self.configs               = configs
         self.type_of_encoder       = type_of_encoder
-        self.transformer_encoder_t = TSTransformerEncoder(configs.features_len, configs.TSlength_aligned, configs.d_model, configs.n_head,
-                                        configs.num_transformer_layers, configs.dim_feedforward, dropout=configs.dropout,
-                                        pos_encoding=configs.pos_encoding, activation=configs.transformer_activation,
-                                        norm=configs.transformer_normalization_layer, freeze=configs.freeze
-                                        )
+        self.init_encoder()
+
+        # self.transformer_encoder_t = TSTransformerEncoder(configs.features_len, configs.TSlength_aligned, configs.d_model, configs.n_head,
+        #                                 configs.num_transformer_layers, configs.dim_feedforward, dropout=configs.dropout,
+        #                                 pos_encoding=configs.pos_encoding, activation=configs.transformer_activation,
+        #                                 norm=configs.transformer_normalization_layer, freeze=configs.freeze
+        #                                 )
         
-        self.adaptive_pool_t = nn.Sequential(
-            nn.AdaptiveAvgPool2d(output_size=(configs.time_output_size, configs.channel_output_size)),
-            nn.Flatten(),
-        )
+        # self.adaptive_pool_t = nn.Sequential(
+        #     nn.AdaptiveAvgPool2d(output_size=(configs.time_output_size, configs.channel_output_size)),
+        #     nn.Flatten(),
+        # )
 
-        self.projector_t = nn.Sequential(
-            nn.Linear(configs.time_output_size * configs.channel_output_size, configs.linear_encoder_dim),
-            nn.BatchNorm1d(configs.linear_encoder_dim),
-            nn.ReLU(),
-            nn.Linear(configs.linear_encoder_dim, configs.encoder_layer_dims)
-        )
+        # self.projector_t = nn.Sequential(
+        #     nn.Linear(configs.time_output_size * configs.channel_output_size, configs.linear_encoder_dim),
+        #     nn.BatchNorm1d(configs.linear_encoder_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(configs.linear_encoder_dim, configs.encoder_layer_dims)
+        # )
 
-        self.transformer_encoder_f = TSTransformerEncoder(
-            configs.features_len, configs.TSlength_aligned, configs.d_model, configs.n_head,
-            configs.num_transformer_layers, configs.dim_feedforward, dropout=configs.dropout,
-            pos_encoding=configs.pos_encoding, activation=configs.transformer_activation,
-            norm=configs.transformer_normalization_layer, freeze=configs.freeze
-        )
+        # self.transformer_encoder_f = TSTransformerEncoder(
+        #     configs.features_len, configs.TSlength_aligned, configs.d_model, configs.n_head,
+        #     configs.num_transformer_layers, configs.dim_feedforward, dropout=configs.dropout,
+        #     pos_encoding=configs.pos_encoding, activation=configs.transformer_activation,
+        #     norm=configs.transformer_normalization_layer, freeze=configs.freeze
+        # )
 
-        self.adaptive_pool_f = nn.Sequential(
-            nn.AdaptiveAvgPool2d(output_size=(configs.time_output_size, configs.channel_output_size)),
-            nn.Flatten(),
-        )
+        # self.adaptive_pool_f = nn.Sequential(
+        #     nn.AdaptiveAvgPool2d(output_size=(configs.time_output_size, configs.channel_output_size)),
+        #     nn.Flatten(),
+        # )
 
-        self.projector_f = nn.Sequential(
-            nn.Linear(configs.time_output_size * configs.channel_output_size, configs.linear_encoder_dim),
-            nn.BatchNorm1d(configs.linear_encoder_dim),
-            nn.ReLU(),
-            nn.Linear(configs.linear_encoder_dim, configs.encoder_layer_dims)
-        )
+        # self.projector_f = nn.Sequential(
+        #     nn.Linear(configs.time_output_size * configs.channel_output_size, configs.linear_encoder_dim),
+        #     nn.BatchNorm1d(configs.linear_encoder_dim),
+        #     nn.ReLU(),
+        #     nn.Linear(configs.linear_encoder_dim, configs.encoder_layer_dims)
+        # )
 
     def forward(self, x_in_t: torch.Tensor, x_in_f: torch.Tensor, padding_masks: torch.Tensor, encode: bool = False) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -94,6 +96,14 @@ class TFC(nn.Module):
             f = self.conv_block3_f(f)
             h_freq = f.reshape(f.shape[0], -1)
             z_freq = self.projector_f(h_freq)
+        elif self.type_of_encoder == "lstm":
+            x = self.lstm_t(x_in_t)
+            h_time = self.adaptive_pool_t(x) # h_time = x[:, -1, :]
+            z_time = self.projector_t(h_time)
+
+            f = self.lstm_f(x_in_f)
+            h_freq = self.adaptive_pool_t(x)# h_freq = f[:, -1, :]
+            z_freq = self.projector_f(h_freq)
 
         if encode:
             embeddings = torch.cat((z_time, z_freq), dim=1)
@@ -101,7 +111,7 @@ class TFC(nn.Module):
 
         return h_time, z_time, h_freq, z_freq
 
-    def get_encoder(self, type_of_encoder: str) -> nn.Module:
+    def init_encoder(self) -> nn.Module:
         """
         Get the encoder.
 
@@ -190,6 +200,32 @@ class TFC(nn.Module):
                 nn.BatchNorm1d(256),
                 nn.ReLU(),
                 nn.Linear(256, 128)
+            )
+        elif self.type_of_encoder == "lstm":
+            self.lstm_t = nn.LSTM(input_size=self.configs.input_channels, hidden_size=self.configs.hidden_size, num_layers=self.configs.num_layers, batch_first=True)
+            self.adaptive_pool_t = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(self.configs.time_output_size, self.configs.channel_output_size)),
+                nn.Flatten(),
+            )
+
+            self.projector_t = nn.Sequential(
+                nn.Linear(self.configs.time_output_size * self.configs.channel_output_size, self.configs.linear_encoder_dim),
+                nn.BatchNorm1d(self.configs.linear_encoder_dim),
+                nn.ReLU(),
+                nn.Linear(self.configs.linear_encoder_dim, self.configs.encoder_layer_dims)
+            )
+
+            self.lstm_f = nn.LSTM(input_size=self.configs.input_channels, hidden_size=self.configs.hidden_size, num_layers=self.configs.num_layers, batch_first=True)
+            self.adaptive_pool_f = nn.Sequential(
+                nn.AdaptiveAvgPool2d(output_size=(self.configs.time_output_size, self.configs.channel_output_size)),
+                nn.Flatten(),
+            )
+
+            self.projector_f = nn.Sequential(
+                nn.Linear(self.configs.time_output_size * self.configs.channel_output_size, self.configs.linear_encoder_dim),
+                nn.BatchNorm1d(self.configs.linear_encoder_dim),
+                nn.ReLU(),
+                nn.Linear(self.configs.linear_encoder_dim, self.configs.encoder_layer_dims)
             )
         else:
             raise ValueError("Invalid encoder type.")
