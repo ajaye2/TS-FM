@@ -12,8 +12,28 @@ from .dataset import TSDataset, ImputationDataset, collate_unsuperv, collate_sup
 from .mvts_transformer import *
 from .mvts_transformer.ts_transformer import _get_activation_fn
 from torch.optim.lr_scheduler import StepLR , ReduceLROnPlateau
-from src.Time_Series_Library.models import Informer, Nonstationary_Transformer, ETSformer, DLinear, TimesNet
+# from src.Time_Series_Library.models import Informer, Nonstationary_Transformer, ETSformer, DLinear, TimesNet, Transformer
 from src.configs import Configs, ModelConfig
+import src.Time_Series_Library.models as models
+import importlib
+importlib.reload(models)
+
+import torch.optim.lr_scheduler as lr_scheduler
+
+class NoamScheduler(lr_scheduler._LRScheduler):
+    def __init__(self, optimizer, model_size, factor, warmup, last_epoch=-1, verbose=False):
+        self.model_size = model_size
+        self.factor = factor
+        self.warmup = warmup
+        super(NoamScheduler, self).__init__(optimizer, last_epoch, verbose)
+
+    def get_lr(self):
+        step = self._step_count
+        return [self.factor * (self.model_size ** (-0.5) * min(step ** (-0.5), step * self.warmup ** (-1.5)))
+                for _ in self.base_lrs]
+
+
+
 
 class BaseProjectionLayer(nn.Module):
     """
@@ -65,7 +85,8 @@ class BaseProjectionLayer(nn.Module):
         assert isinstance(dataset, (TSDataset, ImputationDataset))
 
         if collate_fn == 'unsuperv' and isinstance(dataset, ImputationDataset):
-            data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=lambda x: collate_unsuperv(x, max_len=max_len))
+            # data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True, collate_fn=lambda x: collate_unsuperv(x, max_len=max_len))
+            data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
         elif collate_fn == 'superv':
             pass
         else:
@@ -82,7 +103,10 @@ class BaseProjectionLayer(nn.Module):
 
         # Add the learning rate scheduler
         # scheduler = StepLR(optimizer, step_size=scheduler_step_size, gamma=scheduler_gamma)
-        # scheduler = ReduceLROnPlateau(optimizer, 'min', verbose=verbose)
+        scheduler = ReduceLROnPlateau(optimizer, 'min', verbose=verbose)
+
+        # Example usage:
+        # scheduler = NoamScheduler(optimizer, model_size=32, factor=1, warmup=20)
 
         # Keep track of the losses
         losses    = []
@@ -97,8 +121,11 @@ class BaseProjectionLayer(nn.Module):
                 # Zero the gradients
                 optimizer.zero_grad()
 
+                if target_masks is not None:
+                    target_masks =  ~target_masks
+
                 # Forward pass
-                reconstructed = self(x=inputs, mask=padding_masks)
+                reconstructed = self(x=inputs, mask=target_masks)
 
                 # Calculate the loss
                 loss = self.compute_loss(targets, target_masks, padding_masks, reconstructed)
@@ -117,7 +144,7 @@ class BaseProjectionLayer(nn.Module):
                     cum_loss += loss.item()
 
             # Update the learning rate
-            # scheduler.step(cum_loss)
+            scheduler.step(cum_loss)
 
             # Print the loss
             if log:
@@ -214,13 +241,15 @@ class TransformerAutoencoderProjection(BaseProjectionLayer):
         assert model_config.task_name in ['long_term_forecast', 'short_term_forecast', 'imputation']
         
         if type_model == 'ets':
-            self.transformer = ETSformer(model_config).to(device)
+            self.transformer = models.ETSformer(model_config).to(device)
         elif type_model == 'non_stationary':
-            self.transformer = Nonstationary_Transformer(model_config).to(device)
+            self.transformer = models.Nonstationary_Transformer(model_config).to(device)
         elif type_model == 'dlinear':
-            self.transformer = DLinear(model_config, individual=model_config.individual).to(device)
+            self.transformer = models.DLinear(model_config, individual=model_config.individual).to(device)
         elif type_model == 'times_net':
-            self.transformer = TimesNet(model_config).to(device)
+            self.transformer = models.TimesNet(model_config).to(device)
+        elif type_model == 'transformer':
+            self.transformer = models.Transformer(model_config).to(device)
         else:
             raise ValueError(f'Unknown type model: {type_model}')
         
@@ -250,11 +279,12 @@ class TransformerAutoencoderProjection(BaseProjectionLayer):
             if x_dec is not None:
                 x_dec = self.revin_layer._normalize(x_dec)
 
-        if self.type_model == 'ets':
+        if self.type_model == 'ets' or self.type_model == 'transformer':
             x_decoded = self.transformer(x_enc, None, x_dec, None)
         elif self.type_model == 'non_stationary' or self.type_model == 'times_net':
-            mask = torch.ones_like(x_enc) # Change later
-            x_dec = torch.zeros_like(x_enc) # Change later
+            # mask = torch.ones_like(x_enc) # Change later
+     
+            x_dec = x_enc #torch.zeros_like(x_enc) # TODO: Change later
             x_decoded = self.transformer(x_enc, None, x_dec, None, mask)
         elif self.type_model == 'dlinear':
             x_decoded = self.transformer(x_enc, None, x_dec, None)

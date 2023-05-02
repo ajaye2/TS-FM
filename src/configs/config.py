@@ -1,3 +1,4 @@
+import torch
 class Config(object):
     def __init__(self, 
                 input_channels=1,
@@ -41,6 +42,7 @@ class Config(object):
                 transformer_normalization_layer='LayerNorm', # 'BatchNorm'
                 freeze=False,
                 model_configs={},
+                device=torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
                 **kwargs
                 ):
         # model configs
@@ -86,13 +88,21 @@ class Config(object):
         self.batch_size = batch_size
         self.target_batch_size = target_batch_size # the size of target dataset (the # of samples used to fine-tune).
 
+        # device
+        self.device = device
+
         
 
         self.Context_Cont = Context_Cont_configs(temperature, use_cosine_similarity, use_cosine_similarity_f)
         self.TC = TC(hidden_dim, timesteps)
         self.augmentation = augmentations( jitter_scale_ratio, jitter_ratio, max_seg )
 
-        self.model = ModelConfig(**model_configs)
+        if type (model_configs) == dict:
+            self.model = ModelConfig(**model_configs)
+        elif type (model_configs) == ModelConfig:
+            self.model = model_configs
+        else:
+            raise ValueError('model_configs must be a dict or ModelConfig object')
 
         
 

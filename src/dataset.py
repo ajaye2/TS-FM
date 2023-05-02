@@ -75,44 +75,87 @@ class TSDataset(Dataset):
         np.random.shuffle(self.indices)
 
 
-class ImputationDataset(Dataset):
-    """Dynamically computes missingness (noise) mask for each sample
+# class ImputationDataset(Dataset):
+#     """Dynamically computes missingness (noise) mask for each sample
     
-        Modified version of the code from:
-        George Zerveas et al. A Transformer-based Framework for Multivariate Time Series Representation Learning,
-    """
+#         Modified version of the code from:
+#         George Zerveas et al. A Transformer-based Framework for Multivariate Time Series Representation Learning,
+#     """
 
+#     def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,
+#                  mode='separate', distribution='geometric', exclude_feats=None, **kwargs):
+#         super(ImputationDataset, self).__init__()
+
+#         self.data = data 
+#         self.labels = labels
+#         self.masking_ratio = masking_ratio
+#         self.mean_mask_length = mean_mask_length
+#         self.mode = mode
+#         self.distribution = distribution
+#         self.exclude_feats = exclude_feats
+
+#     def __getitem__(self, ind):
+#         """
+#         For a given integer index, returns the corresponding (seq_length, feat_dim) array and a noise mask of same shape
+#         Args:
+#             ind: integer index of sample in dataset
+#         Returns:
+#             X: (seq_length, feat_dim) tensor of the multivariate time series corresponding to a sample
+#             mask: (seq_length, feat_dim) boolean tensor: 0s mask and predict, 1s: unaffected input
+#             ID: ID of sample
+#         """
+
+#         X = self.data[ind]  # (seq_length, feat_dim) array
+#         mask = noise_mask(X, self.masking_ratio, self.mean_mask_length, self.mode, self.distribution,
+#                           self.exclude_feats)  # (seq_length, feat_dim) boolean array
+        
+#         if self.labels is not None:
+#             return X, torch.from_numpy(mask), self.labels[ind]
+
+#         return X, torch.from_numpy(mask)
+
+#     def update(self):
+#         self.mean_mask_length = min(20, self.mean_mask_length + 1)
+#         self.masking_ratio = min(1, self.masking_ratio + 0.05)
+
+#     def __len__(self):
+#         return len(self.data)
+
+class ImputationDataset(Dataset):
     def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,
-                 mode='separate', distribution='geometric', exclude_feats=None, **kwargs):
+                 mode='separate', distribution='geometric', exclude_feats=None, max_len=None,
+                 mask_compensation=False, pad_inputs=False, mask_inputs=True, **kwargs):
         super(ImputationDataset, self).__init__()
 
-        self.data = data 
+        self.data = data
         self.labels = labels
         self.masking_ratio = masking_ratio
         self.mean_mask_length = mean_mask_length
         self.mode = mode
         self.distribution = distribution
         self.exclude_feats = exclude_feats
+        self.max_len = max_len
+        self.mask_compensation = mask_compensation
+        self.pad_inputs = pad_inputs
+        self.mask_inputs = mask_inputs
+
+        # Preprocess the data by applying collate_unsuperv function for each sample
+        self.preprocessed_data = []
+        data_with_masks = []
+        for ind in range(len(data)):
+            X = data[ind]
+            mask = noise_mask(X, self.masking_ratio, self.mean_mask_length, self.mode, self.distribution,
+                              self.exclude_feats)
+            data_with_masks.append((X, torch.from_numpy(mask)))
+
+        X, targets, target_masks, padding_masks = collate_unsuperv(data_with_masks, self.max_len, self.mask_compensation,
+                                                                   self.pad_inputs, self.mask_inputs)
+        for i in range(len(data)):
+            preprocessed_sample = (X[i], targets[i], target_masks[i], padding_masks[i])
+            self.preprocessed_data.append(preprocessed_sample)
 
     def __getitem__(self, ind):
-        """
-        For a given integer index, returns the corresponding (seq_length, feat_dim) array and a noise mask of same shape
-        Args:
-            ind: integer index of sample in dataset
-        Returns:
-            X: (seq_length, feat_dim) tensor of the multivariate time series corresponding to a sample
-            mask: (seq_length, feat_dim) boolean tensor: 0s mask and predict, 1s: unaffected input
-            ID: ID of sample
-        """
-
-        X = self.data[ind]  # (seq_length, feat_dim) array
-        mask = noise_mask(X, self.masking_ratio, self.mean_mask_length, self.mode, self.distribution,
-                          self.exclude_feats)  # (seq_length, feat_dim) boolean array
-        
-        if self.labels is not None:
-            return X, torch.from_numpy(mask), self.labels[ind]
-
-        return X, torch.from_numpy(mask)
+        return self.preprocessed_data[ind]
 
     def update(self):
         self.mean_mask_length = min(20, self.mean_mask_length + 1)
@@ -120,7 +163,6 @@ class ImputationDataset(Dataset):
 
     def __len__(self):
         return len(self.data)
-
 
 class TransductionDataset(Dataset):
 
@@ -288,15 +330,21 @@ def collate_unsuperv(data, max_len=None, mask_compensation=False, pad_inputs=Fal
 
     # Stack and pad features and masks (convert 2D to 3D tensors, i.e. add batch dimension)
     lengths = [X.shape[0] for X in features]  # original sequence length for each time series
+    max_len_orig = max(lengths)
     if max_len is None:
-        max_len = max(lengths)
-    X = torch.zeros(batch_size, max_len, features[0].shape[-1])  # (batch_size, padded_length, feat_dim)
-    target_masks = torch.zeros_like(X,
-                                    dtype=torch.bool)  # (batch_size, padded_length, feat_dim) masks related to objective
-    for i in range(batch_size):
-        end = min(lengths[i], max_len)
-        X[i, :end, :] = features[i][:end, :]
-        target_masks[i, :end, :] = masks[i][:end, :]
+        max_len =max_len_orig
+
+    # if max_len != max_len_orig:
+    #     X = torch.zeros(batch_size, max_len, features[0].shape[-1])  # (batch_size, padded_length, feat_dim)
+    #     target_masks = torch.zeros_like(X,
+    #                                     dtype=torch.bool)  # (batch_size, padded_length, feat_dim) masks related to objective
+    #     for i in range(batch_size):
+    #         end = min(lengths[i], max_len)
+    #         X[i, :end, :] = features[i][:end, :]
+    #         target_masks[i, :end, :] = masks[i][:end, :]
+    # else:
+    X = torch.stack(features, dim=0)  # (batch_size, seq_length, feat_dim)
+    target_masks = torch.stack(masks, dim=0)  # (batch_size, seq_length, feat_dim)
 
     targets = X.clone()
     if mask_inputs:

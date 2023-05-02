@@ -143,13 +143,15 @@ class TSFM:
 
         """Get the total number of data points"""
         total_number_of_data_points = 0
+        all_dataset_names = ""
         for dataset_name, dataset in train_data_dict.items():
             if type(dataset) == dict:
                 total_number_of_data_points += dataset['data'].shape[0]
                 total_number_of_data_points += dataset['labels'].shape[0]
             else:
                 total_number_of_data_points += dataset.shape[0]
-        print(f'Total number of data points: {total_number_of_data_points}')
+            all_dataset_names += dataset_name + ', '
+        print(f'Total number of data points: {total_number_of_data_points} from {all_dataset_names[:-2]}')
 
         """Warmup the projection layers"""
         datasets, optimizer_list, encoder_dataset_type = self.warmup(train_data_dict, warmup_projection_layers=warmup_projection_layers, 
@@ -499,7 +501,7 @@ class TSFM:
             
         return out.cpu()
 
-    
+    # TODO: Implement saving model to s3
     def save(self, fn):
         ''' Save the model to a file.
         
@@ -512,6 +514,9 @@ class TSFM:
         for dataset_name, projection_layer in self.projection_layers.items():
             torch.save(projection_layer.state_dict(), fn + "_projection_layer_{}.pkl".format(dataset_name))        
         torch.save(self.encoder.state_dict(), fn + "_encoder.pkl")
+        # pickle self.n_iters_dict
+         
+
 
     
     def load(self, fn):
