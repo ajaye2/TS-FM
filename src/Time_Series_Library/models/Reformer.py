@@ -23,7 +23,7 @@ class Model(nn.Module):
         self.seq_len = configs.seq_len
 
         self.enc_embedding = DataEmbedding(configs.enc_in, configs.d_model, configs.embed, configs.freq,
-                                           configs.dropout, configs.use_temporal_embed)
+                                           configs.dropout)
         # Encoder
         self.encoder = Encoder(
             [

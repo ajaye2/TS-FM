@@ -27,23 +27,14 @@ class moving_avg(nn.Module):
         super(moving_avg, self).__init__()
         self.kernel_size = kernel_size
         self.avg = nn.AvgPool1d(kernel_size=kernel_size, stride=stride, padding=0)
-        self.stride = stride
 
     def forward(self, x):
-
-        # pad_left = (self.kernel_size - 1) // 2
-        # pad_right = self.kernel_size // 2
-        # pad_right = (x.size(1) - 1) * self.stride + self.kernel_size - x.size(1) - pad_left
-        # x = F.pad(x, (pad_left, pad_right), mode='constant', value=0)
-
         # padding on the both ends of time series
-        front = x[:, 0:1, :].repeat(1, (self.kernel_size ) // 2, 1)
+        front = x[:, 0:1, :].repeat(1, (self.kernel_size - 1) // 2, 1)
         end = x[:, -1:, :].repeat(1, (self.kernel_size - 1) // 2, 1)
         x = torch.cat([front, x, end], dim=1)
-        # print("Input shape after padding: ", x.shape)
         x = self.avg(x.permute(0, 2, 1))
         x = x.permute(0, 2, 1)
-        # print("Final output shape: ", x.shape)
         return x
 
 

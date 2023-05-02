@@ -202,6 +202,30 @@ class Model(nn.Module):
         # (batch_size, num_classes)
         output = self.projection(output)
         return output
+    
+    def encoder(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        x_raw = x_enc.clone().detach()
+
+        # Normalization
+        mean_enc = x_enc.mean(1, keepdim=True).detach()  # B x 1 x E
+        x_enc = x_enc - mean_enc
+        std_enc = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5).detach()  # B x 1 x E
+        x_enc = x_enc / std_enc
+        # B x S x E, B x 1 x E -> B x 1, positive scalar
+        tau = self.tau_learner(x_raw, std_enc).exp()
+        # B x S x E, B x 1 x E -> B x S
+        delta = self.delta_learner(x_raw, mean_enc)
+
+        x_dec_new = torch.cat([x_enc[:, -self.label_len:, :], torch.zeros_like(x_dec[:, -self.pred_len:, :])],
+                              dim=1).to(x_enc.device).clone()
+
+        enc_out = self.enc_embedding(x_enc, x_mark_enc)
+        enc_out, attns = self.encoder(enc_out, attn_mask=None, tau=tau, delta=delta)
+
+        # dec_out = self.projection(enc_out)
+        # dec_out = dec_out * std_enc + mean_enc
+        # return dec_out
+        return enc_out
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
         if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
@@ -216,4 +240,7 @@ class Model(nn.Module):
         if self.task_name == 'classification':
             dec_out = self.classification(x_enc, x_mark_enc)
             return dec_out  # [B, L, D]
+        if self.task_name == 'encoder':
+            dec_out = self.encoder(x_enc, x_mark_enc, x_dec, x_mark_dec)
+            return dec_out
         return None

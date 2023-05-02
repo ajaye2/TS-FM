@@ -25,28 +25,6 @@ class PositionalEmbedding(nn.Module):
     def forward(self, x):
         return self.pe[:, :x.size(1)]
 
-class LearnablePositionalEmbedding(nn.Module):
-
-    def __init__(self, d_model, dropout=0.1, max_len=1024):
-        super(LearnablePositionalEmbedding, self).__init__()
-        self.dropout = nn.Dropout(p=dropout)
-        # Each position gets its own embedding
-        # Since indices are always 0 ... max_len, we don't have to do a look-up
-        self.pe = nn.Parameter(torch.empty(max_len, 1, d_model))  # requires_grad automatically set to True
-        nn.init.uniform_(self.pe, -0.02, 0.02)
-
-    def forward(self, x):
-        r"""Inputs of forward function
-        Args:
-            x: the sequence fed to the positional encoder model (required).
-        Shape:
-            x: [sequence length, batch size, embed dim]
-            output: [sequence length, batch size, embed dim]
-        """
-
-        x = x + self.pe[:x.size(0), :]
-        return self.dropout(x)
-
 
 class TokenEmbedding(nn.Module):
     def __init__(self, c_in, d_model):
@@ -128,12 +106,31 @@ class TimeFeatureEmbedding(nn.Module):
         return self.embed(x)
 
 
+# class DataEmbedding(nn.Module):
+#     def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1):
+#         super(DataEmbedding, self).__init__()
+
+#         self.value_embedding = TokenEmbedding(c_in=c_in, d_model=d_model)
+#         self.position_embedding = PositionalEmbedding(d_model=d_model)
+#         self.temporal_embedding = TemporalEmbedding(d_model=d_model, embed_type=embed_type,
+#                                                     freq=freq) if embed_type != 'timeF' else TimeFeatureEmbedding(
+#             d_model=d_model, embed_type=embed_type, freq=freq)
+#         self.dropout = nn.Dropout(p=dropout)
+
+#     def forward(self, x, x_mark):
+#         if x_mark is None:
+#             x = self.value_embedding(x) + self.position_embedding(x)
+#         else:
+#             x = self.value_embedding(
+#                 x) + self.temporal_embedding(x_mark) + self.position_embedding(x)
+#         return self.dropout(x)
+
 class DataEmbedding(nn.Module):
-    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, use_temporal_embed=True):
+    def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1, use_temporal_embed=True, max_len=256):
         super(DataEmbedding, self).__init__()
 
         self.value_embedding = TokenEmbedding(c_in=c_in, d_model=d_model)
-        self.position_embedding = PositionalEmbedding(d_model=d_model) if embed_type == 'fixed' else LearnablePositionalEmbedding(d_model=d_model)
+        self.position_embedding = PositionalEmbedding(d_model=d_model) if embed_type == 'fixed' else LearnablePositionalEmbedding(d_model=d_model, max_len=max_len)
         self.temporal_embedding = TemporalEmbedding(d_model=d_model, embed_type=embed_type,
                                                     freq=freq) if embed_type != 'timeF' else TimeFeatureEmbedding(
             d_model=d_model, embed_type=embed_type, freq=freq)
@@ -147,7 +144,6 @@ class DataEmbedding(nn.Module):
             x = self.value_embedding(
                 x)  + self.position_embedding(x) + self.temporal_embedding(x_mark)
         return self.dropout(x)
-
 
 class DataEmbedding_wo_pos(nn.Module):
     def __init__(self, c_in, d_model, embed_type='fixed', freq='h', dropout=0.1):

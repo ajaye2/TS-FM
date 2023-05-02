@@ -5,7 +5,7 @@ from einops import rearrange, repeat
 from src.Time_Series_Library.layers.Crossformer_EncDec import scale_block, Encoder, Decoder, DecoderLayer
 from src.Time_Series_Library.layers.Embed import PatchEmbedding
 from src.Time_Series_Library.layers.SelfAttention_Family import AttentionLayer, FullAttention, TwoStageAttentionLayer
-from .PatchTST import FlattenHead
+from src.Time_Series_Library.models.PatchTST import FlattenHead
 
 
 from math import ceil
