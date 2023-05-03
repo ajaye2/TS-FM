@@ -17,6 +17,7 @@ from src.configs import Configs, ModelConfig
 import src.Time_Series_Library.models as models
 import importlib
 importlib.reload(models)
+import time
 
 import torch.optim.lr_scheduler as lr_scheduler
 
@@ -110,7 +111,7 @@ class BaseProjectionLayer(nn.Module):
 
         # Keep track of the losses
         losses    = []
-
+        start_time = time.time()
         # Train the autoencoder for n_epochs
         for epoch in range(n_epochs):
             cum_loss = 0
@@ -152,6 +153,10 @@ class BaseProjectionLayer(nn.Module):
 
             # Save the loss
             losses.append(cum_loss / len(data_loader))
+        
+        # Print the time for warmup
+        if log:
+            print(f'Finished warmup in {time.time() - start_time} seconds.')
 
         return losses 
 

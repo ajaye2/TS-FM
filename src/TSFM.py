@@ -18,6 +18,7 @@ from .TFC.loss import NTXentLoss_poly, NTXentLoss
 import torch.fft as fft
 import os
 from accelerate import Accelerator
+import time as time_stamp
 
 
 class TSFM:
@@ -42,7 +43,8 @@ class TSFM:
         encoder_config=None,
         univariate_forcast_hidden_dim=64,
         use_revin=True,
-        univariate_criterion='mse'
+        univariate_criterion='mse',
+        type_of_encoder='transformer',
 
     ):
         ''' 
@@ -78,6 +80,7 @@ class TSFM:
         self.loss_dict_by_steps = {}
         self.model_name = model_name
         self.n_iters_dict = {}
+        self.type_of_encoder = type_of_encoder
 
         #TODO: Add optionality to use accelerator
         self.accelerator = Accelerator()
@@ -179,6 +182,9 @@ class TSFM:
         self.loss_dict_by_steps = {name: [] for name in train_data_dict.keys() if name not in self.loss_dict_by_steps.keys()}
         self.n_iters_dict = {name: 0 for name in train_data_dict.keys() if name not in self.n_iters_dict.keys()}
 
+        """Initialize the time"""
+        start_time = time_stamp.time()
+
         """Start training"""
         while True:
             """Check if the number of epochs is reached"""
@@ -211,8 +217,9 @@ class TSFM:
                     self.n_iters_dict[dataset_name] += 1
 
                 avg_n_iters = int( np.mean(list(self.n_iters_dict.values())) )
+                # min_n_iters = min(list(self.n_iters_dict.values()))
                 
-                if avg_n_iters % print_every_iter == 0:
+                if avg_n_iters % print_every_iter <= 10:
                     model_path = f'./models/{self.model_name}/iter_{avg_n_iters}/'
                     if not os.path.exists(model_path):
                         os.makedirs(model_path)
@@ -231,6 +238,15 @@ class TSFM:
             """Update the number of epochs"""
             self.n_epochs += 1
             if interrupted: break
+        
+        """Save the model"""
+        model_path = f'./models/{self.model_name}/final/'
+        if not os.path.exists(model_path):
+            os.makedirs(model_path)
+        self.save(model_path)
+
+        """Print the time"""
+        print(f'Training time: {time_stamp.time() - start_time} seconds')
     
         return loss_dict
     
@@ -415,7 +431,7 @@ class TSFM:
 
     def get_encoder_layer(self):
         if self.encoder_layer == 'TFC':
-            encoder = TFC(self.encoder_config).to(self.device)
+            encoder = TFC(self.encoder_config, self.type_of_encoder).to(self.device)
         else:
             raise NotImplementedError(f'Encoder layer {self.encoder_layer} is not implemented.')
         

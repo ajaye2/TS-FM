@@ -116,7 +116,7 @@ class TFC(nn.Module):
     def init_non_stationary_transformer_encoder(self):
         self.configs.task_name = "encoder"
 
-        self.transformer_encoder_t = models.Nonstationary_Transformer(self.configs).to(self.device)
+        self.transformer_encoder_t = models.Nonstationary_Transformer(self.configs.model_configs).to(self.device)
 
         self.adaptive_pool_t = nn.Sequential(
             nn.AdaptiveAvgPool2d(output_size=(self.configs.time_output_size, self.configs.channel_output_size)),
@@ -130,15 +130,15 @@ class TFC(nn.Module):
             nn.Linear(self.configs.linear_encoder_dim, self.configs.encoder_layer_dims)
         ).to(self.device)
 
-        self.transformer_encoder_f = models.Nonstationary_Transformer(self.configs).to(self.device)
+        self.transformer_encoder_f = models.Nonstationary_Transformer(self.configs.model_configs).to(self.device)
 
         self.adaptive_pool_f = nn.Sequential(
-            nn.AdaptiveAvgPool2d(output_size=(self.configs.freq_output_size, self.configs.channel_output_size)),
+            nn.AdaptiveAvgPool2d(output_size=(self.configs.time_output_size, self.configs.channel_output_size)),
             nn.Flatten(),
         ).to(self.device)
 
         self.projector_f = nn.Sequential(
-            nn.Linear(self.configs.freq_output_size * self.configs.channel_output_size, self.configs.linear_encoder_dim),
+            nn.Linear(self.configs.time_output_size * self.configs.channel_output_size, self.configs.linear_encoder_dim),
             nn.BatchNorm1d(self.configs.linear_encoder_dim),
             nn.ReLU(),
             nn.Linear(self.configs.linear_encoder_dim, self.configs.encoder_layer_dims)

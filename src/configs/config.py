@@ -98,9 +98,9 @@ class Config(object):
         self.augmentation = augmentations( jitter_scale_ratio, jitter_ratio, max_seg )
 
         if type (model_configs) == dict:
-            self.model = ModelConfig(**model_configs)
+            self.model_configs = ModelConfig(**model_configs)
         elif type (model_configs) == ModelConfig:
-            self.model = model_configs
+            self.model_configs = model_configs
         else:
             raise ValueError('model_configs must be a dict or ModelConfig object')
 
@@ -159,6 +159,10 @@ class ModelConfig(object):
                  pred_len=24,
                  label_len=24,
                  num_class=1,
+                 seq_len=96,
+                 use_temporal_embed=False,
+                 p_hidden_dims=[128, 64, 32],
+                 p_hidden_layers=3,
                  **kwargs):
         self.task_name = task_name
         self.enc_in = enc_in
@@ -179,5 +183,9 @@ class ModelConfig(object):
         self.pred_len = pred_len
         self.label_len = label_len
         self.num_class = num_class
+        self.seq_len = seq_len
+        self.use_temporal_embed = use_temporal_embed
+        self.p_hidden_dims = p_hidden_dims
+        self.p_hidden_layers = p_hidden_layers
         for k, v in kwargs.items():
             setattr(self, k, v)

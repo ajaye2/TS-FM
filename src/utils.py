@@ -5,8 +5,8 @@ import pickle
 import torch
 import random
 from datetime import datetime
-from torch import nn
-
+import matplotlib.pyplot as plt
+import numpy as np
 
 import torch
 import torch.nn as nn
@@ -31,6 +31,63 @@ class Normalizer():
         return x
 
 
+# fucntion for creating fake time series data
+def create_data(size=1000, seq_len=100, input_dims=1, output_dims=1, noise=0.1):
+    x = np.random.randn(size, seq_len, input_dims)
+    w = np.random.randn(input_dims, output_dims)
+    b = np.random.randn(output_dims)
+    y = np.matmul(x, w) + b + np.random.randn(size, seq_len, output_dims) * noise
+
+
+    return x, y
+# fucntion for creating fake highly non-linear time series data
+def create_complex_data(size=1000, seq_len=100, input_dims=1, output_dims=1, noise=0.1):
+    x = np.random.randn(size, seq_len, input_dims)
+    w = np.random.randn(input_dims, output_dims)
+    b = np.random.randn(output_dims)
+    y = np.sin(np.matmul(x, w) + b) + np.random.randn(size, seq_len, output_dims) * noise
+
+
+
+def get_train_val_test_array(array, train_size, val_size, test_size):
+    train_len          = int(len(array)*train_size)
+    val_len            = int(len(array)*val_size)
+    test_len           = int(len(array)*test_size)
+
+    train_array, val_array, test_array = array[:train_len], array[train_len:train_len+val_len], array[train_len+val_len:]
+    return train_array, val_array, test_array
+
+def plot_2d(series, labels, title, figsize=(15, 3)):
+    """
+    This function plots a 2D scatter plot of the given series against its index, using the labels for color.
+    
+    :param series: A 2D numpy array or list of lists containing the data series.
+    :param labels: A 1D numpy array or list containing the corresponding labels.
+    :param title: A string representing the title of the plot.
+    """
+    # set the size of the plot
+    plt.figure(figsize=figsize)
+    
+    # Ensure the input is in the correct format
+    # index = series.index if isinstance(series, pd.Series) else np.arange(len(series))
+    index  = np.arange(len(series))
+    series = np.array(series)
+    labels = np.array(labels)
+    
+    # Create a scatter plot
+    plt.scatter(index, series, c=labels, cmap='viridis')
+    
+    # Set plot title and axis labels
+    plt.title(title)
+    plt.xlabel('Index')
+    plt.ylabel('Series')
+
+    # Add a colorbar to show label colors
+    plt.colorbar(label='Labels')
+
+    # Display the plot
+    plt.show()
+
 
 # TODO: Recheck logic of this function
 def create_3d_array(df, indices, T):
@@ -40,6 +97,7 @@ def create_3d_array(df, indices, T):
     
     # result = np.zeros((n, T, F))
     result = []
+    result_indices = []
 
     # create dictionary where key is index and value is next index
     next_idx_dict = {df.index[i]: df.index[i+1] for i in range(len(df)-1)}
@@ -52,11 +110,12 @@ def create_3d_array(df, indices, T):
         if len(temp_df) >= T:
             # result[i] = temp_df.iloc[-T:].values
             result.append(temp_df.iloc[-T:].values)
+            result_indices.append(idx)
         # else:
             # print(f"Index {idx} has less than {T} rows")
 
 
-    return np.array( result )
+    return np.array( result ), result_indices
 
 def generate_univariate_data_labels(array):
 
