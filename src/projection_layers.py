@@ -81,7 +81,8 @@ class BaseProjectionLayer(nn.Module):
         Returns:
             None.
         """
-
+        if log:
+            print('Starting warmup...')
         start_time = time.time()
         
         # Create a DataLoader for the warmup data

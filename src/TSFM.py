@@ -518,7 +518,7 @@ class TSFM:
         return out.cpu()
 
     # TODO: Implement saving model to s3
-    def save(self, fn):
+    def save(self, fn, projection_layers=True, encoder=True):
         ''' Save the model to a file.
         
         Args:
@@ -527,15 +527,18 @@ class TSFM:
         if fn[-4:] == '.pkl':
             fn = fn[:-4]
 
-        for dataset_name, projection_layer in self.projection_layers.items():
-            torch.save(projection_layer.state_dict(), fn + "_projection_layer_{}.pkl".format(dataset_name))        
-        torch.save(self.encoder.state_dict(), fn + "_encoder.pkl")
+        if projection_layers:
+            for dataset_name, projection_layer in self.projection_layers.items():
+                torch.save(projection_layer.state_dict(), fn + "_projection_layer_{}.pkl".format(dataset_name)) 
+
+        if encoder:
+            torch.save(self.encoder.state_dict(), fn + "_encoder.pkl")
         # pickle self.n_iters_dict
          
 
 
     
-    def load(self, fn):
+    def load(self, fn, projection_layers=True, encoder=True):
         ''' Load the model from a file.
         
         Args:
@@ -544,10 +547,12 @@ class TSFM:
         if fn[-4:] == '.pkl':
             fn = fn[:-4]
         
-        for dataset_name, projection_layer in self.projection_layers.items():
-            state_dict = torch.load(fn + "_projection_layer_{}.pkl".format(dataset_name), map_location=self.device)
-            projection_layer.load_state_dict(state_dict)
+        if projection_layers:
+            for dataset_name, projection_layer in self.projection_layers.items():
+                state_dict = torch.load(fn + "_projection_layer_{}.pkl".format(dataset_name), map_location=self.device)
+                projection_layer.load_state_dict(state_dict)
 
-        state_dict = torch.load(fn + "_encoder.pkl", map_location=self.device)
-        self.encoder.load_state_dict(state_dict)
-    
+        if encoder:
+            state_dict = torch.load(fn + "_encoder.pkl", map_location=self.device)
+            self.encoder.load_state_dict(state_dict)
+        
