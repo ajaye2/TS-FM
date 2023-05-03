@@ -1,6 +1,9 @@
 import numpy as np
 from torch.utils.data import Dataset
 import torch
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing.dummy as multiprocessing
+
 
 ### Code from:
 ### George Zerveas et al. A Transformer-based Framework for Multivariate Time Series Representation Learning, 
@@ -74,52 +77,6 @@ class TSDataset(Dataset):
     def shuffle_indices(self):
         np.random.shuffle(self.indices)
 
-
-# class ImputationDataset(Dataset):
-#     """Dynamically computes missingness (noise) mask for each sample
-    
-#         Modified version of the code from:
-#         George Zerveas et al. A Transformer-based Framework for Multivariate Time Series Representation Learning,
-#     """
-
-#     def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,
-#                  mode='separate', distribution='geometric', exclude_feats=None, **kwargs):
-#         super(ImputationDataset, self).__init__()
-
-#         self.data = data 
-#         self.labels = labels
-#         self.masking_ratio = masking_ratio
-#         self.mean_mask_length = mean_mask_length
-#         self.mode = mode
-#         self.distribution = distribution
-#         self.exclude_feats = exclude_feats
-
-#     def __getitem__(self, ind):
-#         """
-#         For a given integer index, returns the corresponding (seq_length, feat_dim) array and a noise mask of same shape
-#         Args:
-#             ind: integer index of sample in dataset
-#         Returns:
-#             X: (seq_length, feat_dim) tensor of the multivariate time series corresponding to a sample
-#             mask: (seq_length, feat_dim) boolean tensor: 0s mask and predict, 1s: unaffected input
-#             ID: ID of sample
-#         """
-
-#         X = self.data[ind]  # (seq_length, feat_dim) array
-#         mask = noise_mask(X, self.masking_ratio, self.mean_mask_length, self.mode, self.distribution,
-#                           self.exclude_feats)  # (seq_length, feat_dim) boolean array
-        
-#         if self.labels is not None:
-#             return X, torch.from_numpy(mask), self.labels[ind]
-
-#         return X, torch.from_numpy(mask)
-
-#     def update(self):
-#         self.mean_mask_length = min(20, self.mean_mask_length + 1)
-#         self.masking_ratio = min(1, self.masking_ratio + 0.05)
-
-#     def __len__(self):
-#         return len(self.data)
 
 class ImputationDataset(Dataset):
     def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,

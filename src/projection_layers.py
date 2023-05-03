@@ -81,6 +81,9 @@ class BaseProjectionLayer(nn.Module):
         Returns:
             None.
         """
+
+        start_time = time.time()
+        
         # Create a DataLoader for the warmup data
         # print(type(dataset))
         assert isinstance(dataset, (TSDataset, ImputationDataset))
@@ -94,8 +97,9 @@ class BaseProjectionLayer(nn.Module):
             data_loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
         if log:
-            print(f'Warming up with {len(data_loader)} batches of size {batch_size}. Dataset name {dataset_name}.')
-
+            print(f'Warming up with {len(data_loader)} batches of size {batch_size}. Dataset name {dataset_name}. Time took {time.time() - start_time} seconds')
+        
+   
         # Define the loss function and optimizer
         optimizer = optim.Adam(self.parameters(), lr=learning_rate)
 
@@ -111,7 +115,7 @@ class BaseProjectionLayer(nn.Module):
 
         # Keep track of the losses
         losses    = []
-        start_time = time.time()
+        
         # Train the autoencoder for n_epochs
         for epoch in range(n_epochs):
             cum_loss = 0
