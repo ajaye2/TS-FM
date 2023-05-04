@@ -77,6 +77,11 @@ class TSDataset(Dataset):
     def shuffle_indices(self):
         np.random.shuffle(self.indices)
 
+def preprocess_sample(args):
+    X, masking_ratio, mean_mask_length, mode, distribution, exclude_feats = args
+    mask = noise_mask(X, masking_ratio, mean_mask_length, mode, distribution, exclude_feats)
+    X, mask = X, torch.from_numpy(mask)
+    return (X, mask)
 
 class ImputationDataset(Dataset):
     def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,

@@ -81,7 +81,8 @@ class BaseProjectionLayer(nn.Module):
         Returns:
             None.
         """
-
+        if log:
+            print('Starting warmup...')
         start_time = time.time()
         
         # Create a DataLoader for the warmup data
@@ -125,12 +126,12 @@ class BaseProjectionLayer(nn.Module):
 
                 # Zero the gradients
                 optimizer.zero_grad()
-
-                if target_masks is not None:
-                    target_masks =  ~target_masks
+                input_masks = target_masks
+                if input_masks is not None:
+                    input_masks =  ~input_masks
 
                 # Forward pass
-                reconstructed = self(x=inputs, mask=target_masks)
+                reconstructed = self(x=inputs, mask=input_masks)
 
                 # Calculate the loss
                 loss = self.compute_loss(targets, target_masks, padding_masks, reconstructed)

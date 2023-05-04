@@ -6,9 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
-KEYS.py
-src/KEYS.py
-models/
+# KEYS.py
+# src/KEYS.py
+# models/
 
 # Distribution / packaging
 .Python

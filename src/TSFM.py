@@ -19,6 +19,7 @@ import torch.fft as fft
 import os
 from accelerate import Accelerator
 import time as time_stamp
+import pickle
 
 
 class TSFM:
@@ -179,8 +180,8 @@ class TSFM:
         
         """Initialize the loss dict"""
         loss_dict = {name: [] for name in train_data_dict.keys() }
-        self.loss_dict_by_steps = {name: [] for name in train_data_dict.keys() if name not in self.loss_dict_by_steps.keys()}
-        self.n_iters_dict = {name: 0 for name in train_data_dict.keys() if name not in self.n_iters_dict.keys()}
+        self.loss_dict_by_steps = {name: [] for name in train_data_dict.keys() }
+        self.n_iters_dict = {name: 0 for name in train_data_dict.keys()}
 
         """Initialize the time"""
         start_time = time_stamp.time()
@@ -206,7 +207,7 @@ class TSFM:
                 
                 """Train Step"""
                 for dataset_name, data in batch.items():
-                    loss = self.train_step(data, dataset_name, optimizer, encoder_dataset_type)
+                    loss = self.train_step(data, dataset_name, optimizer, encoder_dataset_type, batch_size)
                     cum_loss_dict[dataset_name] += loss.item()
                     self.loss_dict_by_steps[dataset_name].append(loss.item())
 
@@ -316,14 +317,14 @@ class TSFM:
         
         return datasets, optimizer_list, encoder_dataset_type
 
-    def train_step(self, data, dataset_name, optimizer, data_set_type):
+    def train_step(self, data, dataset_name, optimizer, data_set_type, batch_size):
 
         """Set the gradients to zero"""
         optimizer.zero_grad()
 
         """Train Step"""
         if self.encoder_layer == 'TFC':
-            loss = self._train_step_TFC(data, dataset_name, data_set_type)
+            loss = self._train_step_TFC(data, dataset_name, data_set_type, batch_size)
 
         """Backpropagation"""
         # loss.backward()
@@ -336,7 +337,7 @@ class TSFM:
         
         return loss
 
-    def _train_step_TFC(self, batch, dataset_name, data_set_type):
+    def _train_step_TFC(self, batch, dataset_name, data_set_type, batch_size):
 
         """Get the inputs"""
         config                              = self.configs[dataset_name]
@@ -377,7 +378,7 @@ class TSFM:
         #     univariate_forcast_loss = self._univariate_forcast_criterion(uni_forcast, targets) + self._univariate_forcast_criterion(uni_forcast_aug, targets)
 
         """Compute the context contrastive loss - NTXentLoss: normalized temperature-scaled cross entropy loss. From SimCLR"""
-        nt_xent_criterion                   = NTXentLoss_poly(self.device, config.batch_size, config.Context_Cont.temperature,
+        nt_xent_criterion                   = NTXentLoss_poly(self.device, batch_size, config.Context_Cont.temperature,
                                                 config.Context_Cont.use_cosine_similarity) # device, 128, 0.2, True
 
         loss_t                              = nt_xent_criterion(h_t, h_t_aug)
@@ -518,7 +519,7 @@ class TSFM:
         return out.cpu()
 
     # TODO: Implement saving model to s3
-    def save(self, fn):
+    def save(self, fn, projection_layers=True, encoder=True):
         ''' Save the model to a file.
         
         Args:
@@ -527,15 +528,20 @@ class TSFM:
         if fn[-4:] == '.pkl':
             fn = fn[:-4]
 
-        for dataset_name, projection_layer in self.projection_layers.items():
-            torch.save(projection_layer.state_dict(), fn + "_projection_layer_{}.pkl".format(dataset_name))        
-        torch.save(self.encoder.state_dict(), fn + "_encoder.pkl")
+        if projection_layers:
+            for dataset_name, projection_layer in self.projection_layers.items():
+                torch.save(projection_layer.state_dict(), fn + "_projection_layer_{}.pkl".format(dataset_name)) 
+
+        if encoder:
+            torch.save(self.encoder.state_dict(), fn + "_encoder.pkl")
+
+        
+        with open(f'{fn}_loss_dict_by_steps.pkl', 'wb') as f:
+            pickle.dump(self.loss_dict_by_steps, f)
         # pickle self.n_iters_dict
          
-
-
     
-    def load(self, fn):
+    def load(self, fn, projection_layers=True, encoder=True):
         ''' Load the model from a file.
         
         Args:
@@ -544,10 +550,16 @@ class TSFM:
         if fn[-4:] == '.pkl':
             fn = fn[:-4]
         
-        for dataset_name, projection_layer in self.projection_layers.items():
-            state_dict = torch.load(fn + "_projection_layer_{}.pkl".format(dataset_name), map_location=self.device)
-            projection_layer.load_state_dict(state_dict)
+        if projection_layers:
+            for dataset_name, projection_layer in self.projection_layers.items():
+                state_dict = torch.load(fn + "_projection_layer_{}.pkl".format(dataset_name), map_location=self.device)
+                projection_layer.load_state_dict(state_dict)
 
-        state_dict = torch.load(fn + "_encoder.pkl", map_location=self.device)
-        self.encoder.load_state_dict(state_dict)
-    
+        if encoder:
+            state_dict = torch.load(fn + "_encoder.pkl", map_location=self.device)
+            self.encoder.load_state_dict(state_dict)
+
+        
+        with open(f'{fn}_loss_dict_by_steps.pkl', 'rb') as f:
+            self.loss_dict_by_steps = pickle.load(f)
+        
