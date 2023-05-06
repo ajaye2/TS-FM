@@ -141,6 +141,54 @@ class TSFM:
             self._univariate_forcast_criterion, 
             self.univariate_revin_layer
         )
+    
+    def add_dataset(self, dataset_name, data_shape, train_data, warmup_projection_layers = True, warmup_batch_size=512, warmup_epochs = 10, log=True, lr= 1e-4, warmup_config_kwargs = {}, shuffle=True, **kwargs):
+        """Add a dataset to the model"""
+
+        if dataset_name in self.projection_layers.keys(): 
+            print(f"Dataset {dataset_name} already exists")
+            return
+        assert len(data_shape) == 2
+        self._projection_layers[dataset_name] = self.get_projection_layer(data_shape, self.projection_layer_encoder).to(self.device)
+        self.projection_layers[dataset_name]  = torch.optim.swa_utils.AveragedModel(self._projection_layers[dataset_name]).to(self.device)
+        self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
+        self.configs[dataset_name] = {}
+
+        self._projection_layers[dataset_name], self.projection_layers[dataset_name] = self.accelerator.prepare(self._projection_layers[dataset_name], self.projection_layers[dataset_name])
+        if type(train_data) == dict:
+            train_data, labels = train_data['data'], train_data['labels']
+        else:
+            labels = None
+        assert train_data.ndim == 3
+                
+        """Remove the nan values"""
+        # mask            = ~np.isnan(train_data).all(axis=2).all(axis=1)
+        # train_data      = train_data[mask, :].astype(np.float32)
+        # train_data             = train_data[~np.isnan(train_data).all(axis=2).all(axis=1)]
+
+        """Convert the data to torch"""
+        if type(train_data) == np.array:
+            train_data = torch.from_numpy(train_data).to(self.dtype).to(self.device)
+        
+        """Warmup the projection layers"""
+        if warmup_projection_layers:
+            batch_size = warmup_batch_size
+            if batch_size > train_data.shape[0]:
+                batch_size = train_data.shape[0] // 20
+
+            warmup_config = warmup_config_kwargs[dataset_name]
+            dataset = warmup_config['data_set_type'](train_data, labels=labels, shuffle=shuffle, **kwargs)
+            n_epochs = warmup_epochs if 'n_epochs' not in warmup_config else warmup_config['n_epochs']
+            batch_s  = batch_size if 'batch_size' not in warmup_config else warmup_config['batch_size']
+            pl_kwargs = warmup_config['kwargs'] if 'kwargs' in warmup_config else {}
+            pl_lr    = lr if 'lr' not in warmup_config else warmup_config['lr']
+            self._projection_layers[dataset_name].warmup(dataset, n_epochs=n_epochs, batch_size=batch_s, learning_rate=pl_lr, 
+                                                            log=log, data_set_type=warmup_config['data_set_type'], 
+                                                            collate_fn='unsuperv', max_len=self.max_seq_length, 
+                                                            dataset_name=dataset_name, accelerator=self.accelerator,
+                                                            **pl_kwargs
+                                                            ) 
+
 
     #TODO: Implement logging of loss in database
     def fit(self, train_data_dict, labels=None, lr=1e-2, n_epochs=None, batch_size=512, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None,  warmup_batch_size=512, print_every_iter=10000, **kwargs):
