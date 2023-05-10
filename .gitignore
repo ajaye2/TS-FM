@@ -11,6 +11,8 @@ __pycache__/
 # models/
 enter/
 
+# src/ts2vec
+
 # Distribution / packaging
 .Python
 build/

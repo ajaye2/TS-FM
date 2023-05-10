@@ -1,0 +1,31 @@
+name: ts2vec
+channels:
+  - defaults
+dependencies:
+  - python=3.8
+  - numpy
+  - pandas
+  - scikit-learn
+  - pytorch
+  - torchvision
+  - pip
+  - ipykernel
+  - pip:
+    - torchmetrics
+    - transformers
+    - accelerate
+    - matplotlib
+    - torchinfo
+    - statsmodels
+    - sympy
+    - PyYAML
+    - Bottleneck
+
+
+# conda env create -f ts2vec_requirements.yml
+# conda activate ts2vec
+# conda deactivate 
+
+
+# conda remove -n ts2vec --all
+# unset LD_LIBRARY_PATH - in terminal when getting cudnn error
