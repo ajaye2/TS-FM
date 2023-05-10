@@ -64,7 +64,7 @@ import os
 factorName          = "price"
 lumnis              = LumnisFactors(LUMNIS_API_KEY)
 path_to_data = "/home/ec2-user/TS-FM/src/data/"
-path_to_data = "/home/ubuntu/TS-FM/src/data/"
+path_to_data = "/home/azureuser/TS-FM/src/data/"
 
 btc_file = Path(path_to_data + "btc.csv")
 eth_file = Path(path_to_data + "eth.csv")
@@ -303,7 +303,7 @@ encoder_configs         = Configs(TSlength_aligned=max_seq_len,
 
 
 tsfm                    = TSFM(input_data_shapes_dict, 
-                                model_name="INIT_TEST_V2",
+                                model_name="INIT_TEST_V2_FREEZE_PROJ_LAYERS",
                                 device=DEVICE,
                                 max_seq_length=max_seq_len,
                                 encoder_config=encoder_configs,
@@ -354,7 +354,8 @@ loss          = tsfm.fit(data_dict, n_epochs=N_EPOCHS, warmup_projection_layers=
                          log=LOG, verbose=True, shuffle=True, warmup_epochs=WARMUP_EPOCHS, 
                          warmup_config_kwargs=warmup_config_kwargs, warmup_batch_size=WARMUP_BATCH_SIZE,
                          batch_size=BATCH_SIZE, lr=LR, device=DEVICE, max_seq_length=MAX_SEQ_LENGTH, 
-                         print_every_iter=100
+                         print_every_iter=100,
+                         freeze_proj_layers=True
                         )
 
 

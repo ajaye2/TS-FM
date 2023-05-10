@@ -193,7 +193,7 @@ class TSFM:
 
 
     #TODO: Implement logging of loss in database
-    def fit(self, train_data_dict, labels=None, lr=1e-2, n_epochs=None, batch_size=512, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None,  warmup_batch_size=512, print_every_iter=10000, **kwargs):
+    def fit(self, train_data_dict, labels=None, lr=1e-2, freeze_proj_layers=False, n_epochs=None, batch_size=512, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None,  warmup_batch_size=512, print_every_iter=10000, **kwargs):
 
         """Get the total number of data points"""
         total_number_of_data_points = 0
@@ -208,7 +208,7 @@ class TSFM:
         print(f'Total number of data points: {total_number_of_data_points} from {all_dataset_names[:-2]}')
 
         """Warmup the projection layers"""
-        datasets, optimizer_list, encoder_dataset_type = self.warmup(train_data_dict, warmup_projection_layers=warmup_projection_layers, 
+        datasets, optimizer_list, encoder_dataset_type = self.warmup(train_data_dict, freeze_proj_layers, warmup_projection_layers=warmup_projection_layers, 
                                                                      warmup_epochs=warmup_epochs, shuffle=shuffle, 
                                                                      warmup_config_kwargs=warmup_config_kwargs, warmup_batch_size=warmup_batch_size, 
                                                                      lr=lr, **kwargs
@@ -235,6 +235,11 @@ class TSFM:
 
         """Initialize the time"""
         start_time = time_stamp.time()
+
+        if freeze_proj_layers:
+            for proj_layer in self.projection_layers.values():
+                for param in proj_layer.parameters():
+                    param.requires_grad = False
 
         """Start training"""
         while True:
@@ -301,7 +306,7 @@ class TSFM:
     
         return loss_dict
     
-    def warmup(self, train_data_dict, labels=None, lr=1e-2, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, warmup_batch_size=512, **kwargs):
+    def warmup(self, train_data_dict, freeze_proj_layers, labels=None, lr=1e-2, n_epochs=None, n_iters=None, verbose=False, shuffle=True, warmup_projection_layers=True, warmup_epochs=10, log=True, subset=False, configs=None, training_mode='pre_train', warmup_config_kwargs=None, warmup_batch_size=512, **kwargs):
 
         """Initialize data set dict and optimizer list"""
         datasets       = {}
@@ -363,7 +368,7 @@ class TSFM:
                 raise NotImplementedError(f'Encoder {self.encoder_layer} is not implemented yet.')
             
             """Add the projection layers parameters to the optimizer list"""
-            if self.projection_layer_encoder != 'gaussian_feature_transform':
+            if self.projection_layer_encoder != 'gaussian_feature_transform' and freeze_proj_layers is False:
                 optimizer_list.append({"params": self._projection_layers[dataset_name].parameters()})
             
         
