@@ -10,6 +10,7 @@ import math
 from .RevIN import RevIN
 
 from src.TFC.dataloader import TFCDataset
+from src.feature_transforms import GaussianFourierFeatureTransform
 from .encoders import TFC
 from .configs import Configs
 
@@ -27,7 +28,8 @@ class TSFM:
 
     PROJECTION_LAYER_TYPES = {
         'lstm': LSTMMaskedAutoencoderProjection,
-        'mlp': MLPMaskedAutoencoderProjection
+        'mlp': MLPMaskedAutoencoderProjection,
+        'gaussian_feature_transform': GaussianFourierFeatureTransform
     }
     
     def __init__(
@@ -171,7 +173,7 @@ class TSFM:
             train_data = torch.from_numpy(train_data).to(self.dtype).to(self.device)
         
         """Warmup the projection layers"""
-        if warmup_projection_layers:
+        if warmup_projection_layers and self.projection_layer_encoder != 'gaussian_feature_transform':
             batch_size = warmup_batch_size
             if batch_size > train_data.shape[0]:
                 batch_size = train_data.shape[0] // 20
@@ -322,7 +324,7 @@ class TSFM:
                 train_data = torch.from_numpy(train_data).to(self.dtype).to(self.device)
             
             """Warmup the projection layers"""
-            if warmup_projection_layers:
+            if warmup_projection_layers and self.projection_layer_encoder != 'gaussian_feature_transform':
                 batch_size = warmup_batch_size
                 if batch_size > train_data.shape[0]:
                     batch_size = train_data.shape[0] // 20
@@ -361,7 +363,9 @@ class TSFM:
                 raise NotImplementedError(f'Encoder {self.encoder_layer} is not implemented yet.')
             
             """Add the projection layers parameters to the optimizer list"""
-            optimizer_list.append({"params": self._projection_layers[dataset_name].encoder.parameters()})
+            if self.projection_layer_encoder != 'gaussian_feature_transform':
+                optimizer_list.append({"params": self._projection_layers[dataset_name].parameters()})
+            
         
         return datasets, optimizer_list, encoder_dataset_type
 
@@ -489,6 +493,11 @@ class TSFM:
     def get_projection_layer(self, data_shape, projection_layer_encoder, use_revin=True, loss_type='mae', use_gru=False, **kwargs):
         ts_length  = data_shape[0]
         input_dims = data_shape[1]
+
+        if projection_layer_encoder == "gaussian_feature_transform":
+            proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder]( input_dims, self.projection_layer_dims, [1, 10, 100, 1000] )
+            return proj_layer
+                            
         proj_layer = self.PROJECTION_LAYER_TYPES[projection_layer_encoder](input_dims=input_dims, 
                                                                            hidden_dims=self.projection_layer_dims, 
                                                                            output_dims=self.projection_layer_dims, 
