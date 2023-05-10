@@ -84,7 +84,7 @@ def preprocess_sample(args):
     return (X, mask)
 
 class ImputationDataset(Dataset):
-    def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.15,
+    def __init__(self, data, labels=None, mean_mask_length=3, masking_ratio=0.75,
                  mode='separate', distribution='geometric', exclude_feats=None, max_len=None,
                  mask_compensation=False, pad_inputs=False, mask_inputs=True, **kwargs):
         super(ImputationDataset, self).__init__()

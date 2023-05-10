@@ -303,7 +303,7 @@ encoder_configs         = Configs(TSlength_aligned=max_seq_len,
 
 
 tsfm                    = TSFM(input_data_shapes_dict, 
-                                model_name="INIT_TEST_V2_FREEZE_PROJ_LAYERS",
+                                model_name="INIT_TEST_V3_FREEZE_PROJ_LAYERS",
                                 device=DEVICE,
                                 max_seq_length=max_seq_len,
                                 encoder_config=encoder_configs,

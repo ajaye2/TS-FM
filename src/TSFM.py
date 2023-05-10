@@ -614,6 +614,10 @@ class TSFM:
         
         if projection_layers:
             for dataset_name, projection_layer in self.projection_layers.items():
+                # check if fn + "_projection_layer_{}.pkl".format(dataset_name), exists
+                if not os.path.exists(fn + "_projection_layer_{}.pkl".format(dataset_name)):
+                    print(f"Projection layer for {dataset_name} does not exist")
+                    continue
                 state_dict = torch.load(fn + "_projection_layer_{}.pkl".format(dataset_name), map_location=self.device)
                 projection_layer.load_state_dict(state_dict)
 
