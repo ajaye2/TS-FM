@@ -1,12 +1,15 @@
 name: ts2vec
 channels:
+  - pytorch
+  - nvidia
   - defaults
 dependencies:
   - python=3.8
   - numpy
   - pandas
   - scikit-learn
-  - pytorch
+  - pytorch==1.13.1
+  - cudatoolkit
   - torchvision
   - pip
   - ipykernel
