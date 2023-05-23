@@ -390,7 +390,7 @@ class TSFM:
 
         """Update the parameters"""
         self.projection_layers[dataset_name].update_parameters(self._projection_layers[dataset_name])
-        self.encoder.update_parameters(self.encoder)
+        self.encoder.update_parameters(self._encoder)
         
         return loss
 
@@ -596,6 +596,7 @@ class TSFM:
 
         if encoder:
             torch.save(self.encoder.state_dict(), fn + "_encoder.pkl")
+            torch.save(self._encoder.state_dict(), fn + "_encoder_raw.pkl")
 
         
         with open(f'{fn}_loss_dict_by_steps.pkl', 'wb') as f:
@@ -624,6 +625,11 @@ class TSFM:
         if encoder:
             state_dict = torch.load(fn + "_encoder.pkl", map_location=self.device)
             self.encoder.load_state_dict(state_dict)
+            
+            state_dict = torch.load(fn + "_encoder_raw.pkl", map_location=self.device)
+            self._encoder.load_state_dict(state_dict)
+            
+            
 
         
         with open(f'{fn}_loss_dict_by_steps.pkl', 'rb') as f:
