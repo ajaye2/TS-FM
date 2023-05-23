@@ -1,15 +1,19 @@
 name: baseline
 channels:
+  - pytorch
+  - nvidia
   - defaults
 dependencies:
   - python=3.8
   - numpy
   - pandas
   - scikit-learn
+  - pytorch==1.13.1
   - pytorch
   - torchvision
   - pip
   - ipykernel
+  - cudatoolkit
   - pip:
     - torchmetrics
     - transformers
@@ -21,6 +25,7 @@ dependencies:
     - sympy
     - PyYAML
 
+# conda install pytorch==1.13.1 torchvision==0.14.1 torchaudio==0.13.1 pytorch-cuda=11.6 -c pytorch -c nvidia
 
 # conda env create -f baseline_requirements.yml
 # conda activate baseline
